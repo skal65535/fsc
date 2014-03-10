@@ -8,7 +8,7 @@ http://arxiv.org/abs/1311.2540
 Namely, it implemented the _tabulated_ version of ANS, or tANS for
 short.
 
-Fabien Giesen also has interesting implementations. See his
+Fabian Giesen also has interesting implementations. See his
 blog for pointers:
 
 http://fgiesen.wordpress.com/
