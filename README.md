@@ -19,6 +19,8 @@ Code is located here: https://github.com/rygorous/ryg_rans
 
 This implementation tries two approaches: bit-by-bit encoding/decoding,
 or byte-by-byte, where bits are groupes in packets of 8bits.
+Note that the coder still emits bits one by one though (b=2, in the
+ANS terminology). Experimenting with b=256 or more is coming next...
 
 There are several 'Spread Function' available to try different
 symbol <-> slots assignments (see BuildSpreadTableXXX() functions).
