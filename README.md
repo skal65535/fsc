@@ -32,6 +32,7 @@ Known limitations:
 
 Command line help:
 
+```
 ./fsc -h
 usage: ./fsc [options] < in_file > out_file
 options:
@@ -71,3 +72,4 @@ usage: ./bit_test [options] [size]
 -fsc               : skip FSC
 -fsc8              : skip FSC8
 -h                 : this help
+```
