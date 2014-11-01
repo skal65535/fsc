@@ -165,4 +165,15 @@ void FSCWriteBits(FSCBitWriter* const bw, int nb, uint32_t bits) {
   }
 }
 
+int FSCAppend(FSCBitWriter* const bw, const uint8_t* const buf, size_t len) {
+  const size_t extra_size = (len - 1) / sizeof(fsc_wval_t) + 1;
+  FSCBitWriterFlush(bw);
+  if (bw->cur_ + extra_size > bw->end_ && !SetSize(bw, extra_size)) {
+    return 0;
+  }
+  memcpy(bw->cur_, buf, extra_size * sizeof(fsc_wval_t));
+  bw->cur_ += extra_size;
+  return 1;
+}
+
 //------------------------------------------------------------------------------

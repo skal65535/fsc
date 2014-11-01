@@ -112,6 +112,8 @@ static FSC_INLINE uint8_t* FSCBitWriterFinish(FSCBitWriter* const bw) {
 void FSCBitWriterDestroy(FSCBitWriter* const bw);
 void FSCWriteBits(FSCBitWriter* const bw, int nb, uint32_t bits);
 
+int FSCAppend(FSCBitWriter* const bw, const uint8_t* const buf, size_t len);
+
 #ifdef __cplusplus
 }    // extern "C"
 #endif

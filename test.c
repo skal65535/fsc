@@ -23,10 +23,10 @@
 
 //------------------------------------------------------------------------------
 
-static int GeneratePdf(int type, int param, int pdf[256],
+static int GeneratePdf(int type, int param, uint32_t pdf[256],
                        FSCRandom* rg, int max_symbol) {
   int i;
-  int total = 0;
+  uint32_t total = 0;
   const double fparam = param / 16.0;
   for (i = 0; i < max_symbol; ++i) {
     const double x = (1. / 256.) * i;
@@ -42,7 +42,7 @@ static int GeneratePdf(int type, int param, int pdf[256],
       } else {
         v = 256;                                                       // uniform
       }
-      int V = (int)v;
+      uint32_t V = (uint32_t)v;
       V += FSCRandomBits(rg, 4);  // a little extra noise
       pdf[i] = V;
       total += V;
@@ -176,7 +176,7 @@ int main(int argc, const char* argv[]) {
     N = fread(base, 1, N, file);
     fclose(file);
   }  else {
-    int pdf[256] = { 0 };
+    uint32_t pdf[256] = { 0 };
     int i;
     FSCRandom r;
     FSCInitRandom(&r);
