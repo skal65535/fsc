@@ -240,7 +240,7 @@ static int BuildTables(FSCEncoder* const enc, const uint32_t counts[]) {
   const int log_tab_size = enc->log_tab_size_;
   const int tab_size = 1 << log_tab_size;
   uint16_t state[MAX_SYMBOLS];
-  uint8_t symbols[TAB_SIZE];  // symbols, spread on the [0, TAB_SIZE) interval
+  uint8_t* symbols;  // symbols, spread on the [0, tab_size) interval
   const int max_symbol = enc->max_symbol_;
   uint16_t* const tab = enc->states_;
   transf_t* const transforms = enc->transforms_;
@@ -265,12 +265,16 @@ static int BuildTables(FSCEncoder* const enc, const uint32_t counts[]) {
   }
   if (pos != tab_size) return 0;   // input not normalized!
 
+  symbols = (uint8_t*)malloc(tab_size * sizeof(*symbols));
+  if (symbols == NULL) return 0;
+
   // Prepare map from symbol to state
   BuildSpreadTable_ptr(max_symbol, counts, log_tab_size, symbols);
   for (pos = 0; pos < tab_size; ++pos) {
     const uint8_t s = symbols[pos];
     tab[state[s]++] = pos + tab_size;
   }
+  free(symbols);
   return max_symbol;
 }
 
