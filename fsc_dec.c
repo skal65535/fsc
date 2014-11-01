@@ -71,7 +71,9 @@ static int BuildStateTable(FSCDecoder* dec, uint32_t counts[], int max_symbol) {
   }
 
   uint8_t symbols[TAB_SIZE];
-  BuildSpreadTable_ptr(max_symbol, counts, log_tab_size, symbols);
+  if (!BuildSpreadTable_ptr(max_symbol, counts, log_tab_size, symbols)) {
+    return 0;
+  }
   for (pos = 0; pos < tab_size; ++pos) {
     s = symbols[pos];
     tab[pos].symbol_ = s;
