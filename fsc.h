@@ -29,7 +29,8 @@
 // Coder parameters
 #define BLOCK_SIZE 8192    // sliding window size
 #define MAX_SYMBOLS 256    // byte-based
-#define LOG_TAB_SIZE 14    // max internal precision (must be <= 14)
+#define LOG_TAB_SIZE      14    // max internal precision (must be <= 14)
+#define MAX_LOG_TAB_SIZE  16    // max precision for word-based coding
 #define CRYPTO_KEY  0
 // disabled for now (so we investigate core algo):
 // #define CRYPTO_KEY 0x3fdc
@@ -37,6 +38,7 @@
 // derived params
 #define TAB_SIZE (1U << LOG_TAB_SIZE)
 #define TAB_MASK (TAB_SIZE - 1)
+#define MAX_TAB_SIZE (1 << MAX_LOG_TAB_SIZE)
 
 // Header parameter
 #define TAB_HDR_BITS 6
