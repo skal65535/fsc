@@ -65,15 +65,15 @@ static int BuildStateTable(FSCDecoder* dec, uint32_t counts[], int max_symbol) {
   const int tab_size = 1 << log_tab_size;
 
   assert(max_symbol <= MAX_SYMBOLS && max_symbol > 0);
+  for (s = 0; s < max_symbol; ++s) state[s] = counts[s];
 
-  for (s = 0; s < max_symbol; ++s) {
-    state[s] = counts[s];
-  }
-
-  uint8_t symbols[TAB_SIZE];
+  uint8_t* const symbols = (uint8_t*)malloc(tab_size * sizeof(*symbols));
+  if (symbols == NULL) return 0;
   if (!BuildSpreadTable_ptr(max_symbol, counts, log_tab_size, symbols)) {
+    free(symbols);
     return 0;
   }
+
   for (pos = 0; pos < tab_size; ++pos) {
     s = symbols[pos];
     tab[pos].symbol_ = s;
@@ -83,7 +83,9 @@ static int BuildStateTable(FSCDecoder* dec, uint32_t counts[], int max_symbol) {
     tab[pos].next_ = new_pos - pos;   // how to jump from Is to I
     tab[pos].len_  = nb_bits;
   }
+  free(symbols);
   if (pos != tab_size) return 0;   // input not normalized!
+
   return 1;
 }
 
