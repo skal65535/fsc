@@ -76,14 +76,14 @@ int FSCNormalizeCounts(uint32_t counts[MAX_SYMBOLS], int max_symbol,
 //------------------------------------------------------------------------------
 // mapping function (common to enc/dec)
 
-extern void (*BuildSpreadTable_ptr)(int max_symbol, const uint32_t counts[],
-                                    int log_tab_size, uint8_t symbols[]);
+extern int (*BuildSpreadTable_ptr)(int max_symbol, const uint32_t counts[],
+                                   int log_tab_size, uint8_t symbols[]);
 
-extern void BuildSpreadTableBucket(int max_symbol, const uint32_t counts[],
+extern int BuildSpreadTableBucket(int max_symbol, const uint32_t counts[],
+                                  int log_tab_size, uint8_t symbols[]);
+extern int BuildSpreadTableReverse(int max_symbol, const uint32_t counts[],
                                    int log_tab_size, uint8_t symbols[]);
-extern void BuildSpreadTableReverse(int max_symbol, const uint32_t counts[],
-                                    int log_tab_size, uint8_t symbols[]);
-extern void BuildSpreadTableModulo(int max_symbol, const uint32_t counts[],
-                                   int log_tab_size, uint8_t symbols[]);
+extern int BuildSpreadTableModulo(int max_symbol, const uint32_t counts[],
+                                  int log_tab_size, uint8_t symbols[]);
 
 #endif  // FSC_FSC_H_

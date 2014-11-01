@@ -166,8 +166,8 @@ static int Log2Ceil(uint32_t v) {   // not a critical function
   }                                              \
 } while (0)
 
-void BuildSpreadTableBucket(int max_symbol, const uint32_t counts[],
-                            int log_tab_size, uint8_t symbols[]) {
+int BuildSpreadTableBucket(int max_symbol, const uint32_t counts[],
+                           int log_tab_size, uint8_t symbols[]) {
   const int tab_size = 1 << log_tab_size;
   int s, n, pos;
   int16_t  buckets[TAB_SIZE];        // entry to linked list of bucket's symbol
@@ -192,6 +192,7 @@ void BuildSpreadTableBucket(int max_symbol, const uint32_t counts[],
   }
   // n < tab_size can happen due to rounding errors
   for (; n != tab_size; ++n) symbols[n] = symbols[n - 1];
+  return 1;
 }
 
 static inline int ReverseBits(int i, int max_bits) {
@@ -204,8 +205,8 @@ static inline int ReverseBits(int i, int max_bits) {
   return v;
 }
 
-void BuildSpreadTableReverse(int max_symbol, const uint32_t counts[],
-                             int log_tab_size, uint8_t symbols[]) {
+int BuildSpreadTableReverse(int max_symbol, const uint32_t counts[],
+                            int log_tab_size, uint8_t symbols[]) {
   const int tab_size = 1 << log_tab_size;
   int s, n, pos;
   for (s = 0, pos = 0; s < max_symbol; ++s) {
@@ -213,9 +214,10 @@ void BuildSpreadTableReverse(int max_symbol, const uint32_t counts[],
       symbols[ReverseBits(pos, log_tab_size)] = s;
     }
   }
+  return 1;
 }
 
-void BuildSpreadTableModulo(int max_symbol, const uint32_t counts[],
+int BuildSpreadTableModulo(int max_symbol, const uint32_t counts[],
                              int log_tab_size, uint8_t symbols[]) {
   const int tab_size = 1 << log_tab_size;
   const int kStep = ((tab_size >> 1) + (tab_size >> 3) + 1);
@@ -227,10 +229,11 @@ void BuildSpreadTableModulo(int max_symbol, const uint32_t counts[],
       symbols[slot] = s;
     }
   }
+  return 1;
 }
 
-void (*BuildSpreadTable_ptr)(int max_symbol, const uint32_t counts[],
-                             int log_tab_size, uint8_t symbols[])
+int (*BuildSpreadTable_ptr)(int max_symbol, const uint32_t counts[],
+                            int log_tab_size, uint8_t symbols[])
     = BuildSpreadTableBucket;
 
 // -----------------------------------------------------------------------------
@@ -245,7 +248,7 @@ static int BuildTables(FSCEncoder* const enc, const uint32_t counts[]) {
   uint16_t* const tab = enc->states_;
   transf_t* const transforms = enc->transforms_;
 
-  assert(max_symbol <= MAX_SYMBOLS && max_symbol > 0);
+  if (max_symbol > MAX_SYMBOLS || max_symbol <= 0) return 0;
 
   for (s = 0, pos = 0; s < max_symbol; ++s) {
     int cnt = counts[s];
@@ -269,7 +272,10 @@ static int BuildTables(FSCEncoder* const enc, const uint32_t counts[]) {
   if (symbols == NULL) return 0;
 
   // Prepare map from symbol to state
-  BuildSpreadTable_ptr(max_symbol, counts, log_tab_size, symbols);
+  if (!BuildSpreadTable_ptr(max_symbol, counts, log_tab_size, symbols)) {
+    free(symbols);
+    return 0;
+  }
   for (pos = 0; pos < tab_size; ++pos) {
     const uint8_t s = symbols[pos];
     tab[state[s]++] = pos + tab_size;

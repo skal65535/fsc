@@ -30,9 +30,9 @@
 
 //------------------------------------------------------------------------------
 
-static void ExperimentalSpread(int max_symbol, const uint32_t counts[],
-                               int log_tab_size, uint8_t symbols[]) {
-  BuildSpreadTableBucket(max_symbol, counts, log_tab_size, symbols);
+static int ExperimentalSpread(int max_symbol, const uint32_t counts[],
+                              int log_tab_size, uint8_t symbols[]) {
+  return BuildSpreadTableBucket(max_symbol, counts, log_tab_size, symbols);
 }
 
 static void Help() {
