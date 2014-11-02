@@ -5,11 +5,15 @@ numeral systems (ANS), as described in the following paper:
 
 http://arxiv.org/abs/1311.2540
 
-Namely, it implemented the _tabulated_ version of ANS, or tANS for
-short.
+To understand ANS, i extensively used the FSE project:
 
-Fabian Giesen also has interesting implementations. See his
-blog for pointers:
+https://github.com/Cyan4973/FiniteStateEntropy
+
+from Yann Collet, which is referenced by Jarek's paper.
+See the blog entry:
+  http://fastcompression.blogspot.fr/2013/12/finite-state-entropy-new-breed-of.html
+
+Fabian Giesen also has interesting implementations. See his blog for pointers:
 
 http://fgiesen.wordpress.com/
 

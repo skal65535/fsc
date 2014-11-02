@@ -3,6 +3,14 @@ FSC: Finite State Coder
 An implementation of the compression technique described
 in http://arxiv.org/pdf/1311.2540v2.pdf
 
+To understand ANS, i extensively used the FSE project:
+
+https://github.com/Cyan4973/FiniteStateEntropy
+
+from Yann Collet, which is referenced by Jarek's paper.
+See the blog entry:
+  http://fastcompression.blogspot.fr/2013/12/finite-state-entropy-new-breed-of.html
+
 Building:
 =========
 There is a primitive "Makefile" to help you build the library (libfsc.a)
