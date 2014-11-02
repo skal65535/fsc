@@ -19,7 +19,7 @@ LDFLAGS = -lm
 
 libfscutils.a: fsc_utils.o fsc_utils.h
 
-libfsc.a: fsc_enc.o fsc_dec.o fsc.h bits.o bits.h alias.o alias.h
+libfsc.a: fsc_enc.o fsc_dec.o fsc.h bits.o bits.h alias.o alias.h histo.o
 
 test: test.o libfsc.a libfscutils.a
 	gcc -o test test.o ./libfsc.a ./libfscutils.a $(LDFLAGS) $(CFLAGS)
