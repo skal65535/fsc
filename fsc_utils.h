@@ -44,4 +44,8 @@ double GetEntropy(const uint8_t* in, size_t size);
 int DrawSymbol(const uint64_t cumul[256], int max_symbol,
                int total, int nb_bits, FSCRandom* rg);
 
+// Option-parsing utils
+int FSCParseCodingMethodOpt(const char opt[], FSCCodingMethod* const method);
+void FSCPrintCodingOptions();
+
 #endif  // FSC_UTILS_H_

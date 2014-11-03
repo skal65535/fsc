@@ -42,42 +42,10 @@ static void Help() {
   printf("-d           : decompression mode\n");
   printf("-s           : don't emit output, just print stats\n");
   printf("-l           : change log-table-size (in [2..14], default 12)\n");
-  printf("-w           : use word-based coding.\n");
-  printf("-w2          : use word-based coding 2x interleave.\n");
-  printf("-a           : use word-based coding + alias.\n");
-  printf("-a2          : use word-based coding + alias + interleave.\n");
-  printf("-mod         : use modulo spread function\n");
-  printf("-rev         : use reverse spread function\n");
-  printf("-pack        : use pack spread function\n");
-  printf("-buck        : use bucket spread function\n");
+  FSCPrintCodingOptions();
   printf("-h           : this help\n");
   exit(0);
 }
-
-static int FSCParseCodingMethodOpt(const char opt[],
-                                   FSCCodingMethod* const method) {
-  if (!strcmp(opt, "-buck")) {
-    *method = CODING_METHOD_BUCKET;
-  } else if (!strcmp(opt, "-rev")) {
-    *method = CODING_METHOD_REVERSE;
-  } else if (!strcmp(opt, "-mod")) {
-    *method = CODING_METHOD_MODULO;
-  } else if (!strcmp(opt, "-pack")) {
-    *method = CODING_METHOD_PACK;
-  } else if (!strcmp(opt, "-w")) {
-    *method = CODING_METHOD_16B;
-  } else if (!strcmp(opt, "-w2")) {
-    *method = CODING_METHOD_16B_2X;
-  } else if (!strcmp(opt, "-a")) {
-    *method = CODING_METHOD_16B_ALIAS;
-  } else if (!strcmp(opt, "-a2")) {
-    *method = CODING_METHOD_16B_ALIAS_2X;
-  } else {
-    return 0;
-  }
-  return 1;
-}
-
 
 int main(int argc, const char* argv[]) {
   int log_tab_size = 12;

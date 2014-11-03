@@ -267,6 +267,42 @@ static int GetBlockW2(FSCDecoder* dec, uint8_t* out, int size,
   return !br->eof_;
 }
 
+static int GetBlockW4(FSCDecoder* dec, uint8_t* out, int size,
+                      FSCBitReader* br) {
+  FSCBitReader lbr = *br;  // it's faster to make a local copy
+  const FSCType* buf = (const FSCType*)FSCBitAlign(&lbr);
+  const FSCType* const buf_end = (const FSCType*)FSCGetByteEnd(&lbr);
+  const Symbol* const syms = dec->symbols_;
+  FSCStateW states[4];
+  lbr.eof_ = (buf == buf_end);
+  if (lbr.eof_) goto End;
+  int r;
+  for (r = 0; r < 4; ++r) {
+    states[r] = (size > r) ? *buf++ : 0;
+  }
+
+  int n;
+  for (n = 0; n < (size & ~3); n += 4) {
+    RENORMALIZE_STATE(states[0]);
+    RENORMALIZE_STATE(states[1]);
+    RENORMALIZE_STATE(states[2]);
+    RENORMALIZE_STATE(states[3]);
+    if (lbr.eof_) break;
+    out[n + 0] = NextSymbol(dec, &states[0]);
+    out[n + 1] = NextSymbol(dec, &states[1]);
+    out[n + 2] = NextSymbol(dec, &states[2]);
+    out[n + 3] = NextSymbol(dec, &states[3]);
+  }
+  for (; n < size; ++n) {
+    RENORMALIZE_STATE(states[n & 3]);
+    if (!lbr.eof_) out[n] = NextSymbol(dec, &states[n & 3]);
+  }
+  FSCSetReadBufferPos(&lbr, (const uint8_t*)buf);
+ End:
+  *br = lbr;
+  return !br->eof_;
+}
+
 static int GetBlockAliasW1(FSCDecoder* dec, uint8_t* out, int size,
                            FSCBitReader* br) {
   FSCBitReader lbr = *br;  // it's faster to make a local copy
@@ -421,6 +457,8 @@ static const DecMethods kDecMethods[CODING_METHOD_LAST] = {
   { ReadParamsW, GetBlockW2, BuildStateTableW, NULL },
   { ReadParamsW, GetBlockAliasW1, BuildStateTableAliasW, NULL },
   { ReadParamsW, GetBlockAliasW2, BuildStateTableAliasW, NULL },
+
+  { ReadParamsW, GetBlockW4, BuildStateTableW, NULL },
 };
 
 //------------------------------------------------------------------------------
@@ -436,12 +474,14 @@ FSCDecoder* FSCInit(const uint8_t* input, size_t len) {
     dec->out_size_ |= FSCReadBits(&dec->br_, 8) << (8 * i);
   }
 
-  dec->method_ = (FSCCodingMethod)FSCReadBits(&dec->br_, 3);
+  dec->method_ = (FSCCodingMethod)FSCReadBits(&dec->br_, 4);
+  if (dec->method_ >= CODING_METHOD_LAST) goto Error;
   dec->methods_ = kDecMethods[dec->method_];
 
   uint32_t counts[MAX_SYMBOLS];
   if (!dec->methods_.read_params(dec, &dec->br_, counts) ||
       !dec->methods_.build_tables(dec, counts)) {
+ Error:
     dec->status_ = FSC_ERROR;
   } else {
     dec->status_ = FSC_OK;

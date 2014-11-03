@@ -27,7 +27,7 @@
 #include <string.h>
 
 // Coder parameters
-#define BLOCK_SIZE 8192    // sliding window size
+#define BLOCK_SIZE  8192    // sliding window size
 #define MAX_SYMBOLS 256    // byte-based
 #define LOG_TAB_SIZE      14    // max internal precision (must be <= 14)
 #define MAX_LOG_TAB_SIZE  16    // max precision for word-based coding
@@ -46,6 +46,8 @@ typedef enum {
   CODING_METHOD_16B_2X,   // default
   CODING_METHOD_16B_ALIAS,
   CODING_METHOD_16B_ALIAS_2X,
+
+  CODING_METHOD_16B_4X,   // default
 
   CODING_METHOD_LAST
 } FSCCodingMethod;

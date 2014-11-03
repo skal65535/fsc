@@ -338,6 +338,75 @@ static int DoPutBlockW2(const FSCEncoder* enc, const uint8_t* in, int size,
   return pos;
 }
 
+static int DoPutBlockW4(const FSCEncoder* enc, const uint8_t* in, int size,
+                        FSCType output[BLOCK_SIZE]) {
+  int pos = BLOCK_SIZE;
+  FSCStateW states[4] = { FSC_MAX, FSC_MAX, FSC_MAX, FSC_MAX };
+  const FSCStateW norm = (FSC_MAX >> MAX_LOG_TAB_SIZE) << FSC_BITS;
+  int k = size;
+  int r = size & 3;
+  assert(enc->log_tab_size_ == MAX_LOG_TAB_SIZE);
+  while (r-- > 0) {
+    const Symbol* const s = &enc->symbols_[in[--k]];
+    FLUSH_STATE(states[3 - r], norm * s->freq_);
+    RENORMALIZE_STATE(states[3 - r], s);
+  }
+  while (k > 0) {
+    const Symbol* const s0 = &enc->symbols_[in[--k]];
+    const Symbol* const s1 = &enc->symbols_[in[--k]];
+    const Symbol* const s2 = &enc->symbols_[in[--k]];
+    const Symbol* const s3 = &enc->symbols_[in[--k]];
+    FLUSH_STATE(states[0], norm * s0->freq_);
+    FLUSH_STATE(states[1], norm * s1->freq_);
+    FLUSH_STATE(states[2], norm * s2->freq_);
+    FLUSH_STATE(states[3], norm * s3->freq_);
+    RENORMALIZE_STATE(states[0], s0);
+    RENORMALIZE_STATE(states[1], s1);
+    RENORMALIZE_STATE(states[2], s2);
+    RENORMALIZE_STATE(states[3], s3);
+  }
+  for (r = 0; r < 8; ++r) {
+    FLUSH_STATE(states[r & 3], 0);
+  }
+  return pos;
+}
+
+// Generic N-states interleaving function (slow)
+#if 0
+#define NB_STATES 8
+static int DoPutBlockWN(const FSCEncoder* enc, const uint8_t* in, int size,
+                        FSCType output[BLOCK_SIZE]) {
+  int pos = BLOCK_SIZE;
+  FSCStateW states[NB_STATES];
+  const FSCStateW norm = (FSC_MAX >> MAX_LOG_TAB_SIZE) << FSC_BITS;
+  int k = size;
+  int r;
+  assert(enc->log_tab_size_ == MAX_LOG_TAB_SIZE);
+  for (r = 0; r < NB_STATES; ++r) {
+    states[r] = FSC_MAX;
+  }
+  r = size & (NB_STATES - 1);
+  while (r-- > 0) {
+    const Symbol* const s = &enc->symbols_[in[--k]];
+    FLUSH_STATE(states[NB_STATES - 1 - r], norm * s->freq_);
+    RENORMALIZE_STATE(states[NB_STATES - 1 - r], s);
+  }
+  while (k > 0) {
+    for (r = 0; r < NB_STATES; ++r) {
+      const Symbol* const s = &enc->symbols_[in[--k]];
+      FLUSH_STATE(states[r], norm * s->freq_);
+      RENORMALIZE_STATE(states[r], s);
+    }
+  }
+  for (r = 0; r < 2 * NB_STATES; ++r) {
+    FLUSH_STATE(states[r & (NB_STATES - 1)], 0);
+  }
+  return pos;
+}
+#endif
+
+// -----------------------------------------------------------------------------
+
 static int DoPutBlockAliasW1(const FSCEncoder* enc, const uint8_t* in, int size,
                              FSCType output[BLOCK_SIZE]) {
   int pos = BLOCK_SIZE;
@@ -395,6 +464,7 @@ static void FUNC_NAME(const FSCEncoder* enc, const uint8_t* in, int size,   \
 
 PUT_BLOCK_WRAPPER(PutBlockW1, DoPutBlockW1)
 PUT_BLOCK_WRAPPER(PutBlockW2, DoPutBlockW2)
+PUT_BLOCK_WRAPPER(PutBlockW4, DoPutBlockW4)
 PUT_BLOCK_WRAPPER(PutBlockAliasW1, DoPutBlockAliasW1)
 PUT_BLOCK_WRAPPER(PutBlockAliasW2, DoPutBlockAliasW2)
 
@@ -585,6 +655,7 @@ static const EncMethods kEncMethods[CODING_METHOD_LAST] = {
   { WriteParamsW, PutBlockW2, BuildTablesW, NULL },
   { WriteParamsW, PutBlockAliasW1, BuildTablesAliasW, NULL },
   { WriteParamsW, PutBlockAliasW2, BuildTablesAliasW, NULL },
+  { WriteParamsW, PutBlockW4, BuildTablesW, NULL },
 };
 
 static int Encode(const uint8_t* in, size_t size,
@@ -609,7 +680,7 @@ static int Encode(const uint8_t* in, size_t size,
   }
   FSCWriteBits(&bw, 0, 1);
 
-  FSCWriteBits(&bw, enc.method_, 3);
+  FSCWriteBits(&bw, enc.method_, 4);
   if (!enc.methods_.write_params(&enc, counts, &bw)) {
     fprintf(stderr, "Error during WriteParams() call\n");
     goto end;
