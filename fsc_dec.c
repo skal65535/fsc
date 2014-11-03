@@ -24,6 +24,7 @@
 #include <assert.h>
 
 #include "./bits.h"
+#include "./alias.h"
 
 //------------------------------------------------------------------------------
 // Decoding
@@ -34,22 +35,116 @@ typedef enum {
   FSC_EOF = 2
 } FSC_STATUS;
 
+//------------------------------------------------------------------------------
+// Generic methods for decoding process
+
+typedef int (*FSCReadParamsFunc)(FSCDecoder* dec, FSCBitReader* br,
+                                 uint32_t counts[MAX_SYMBOLS]);
+typedef int (*FSCBuildTables)(FSCDecoder* dec, const uint32_t counts[]);
+typedef int (*FSCGetBlockFunc)(FSCDecoder* dec, uint8_t* out, int size,
+                               FSCBitReader* br);
+
+typedef struct {
+  FSCReadParamsFunc       read_params;
+  FSCGetBlockFunc         get_block;
+  FSCBuildTables          build_tables;
+  FSCBuildSpreadTableFunc spread;
+} DecMethods;
+static const DecMethods kDecMethods[CODING_METHOD_LAST];
+
+//------------------------------------------------------------------------------
+
 typedef struct {
   int16_t next_;      // relative delta jump from this state to the next
   uint8_t symbol_;    // symbol associated to the state
   int8_t len_;        // number of bits to read for transitioning this state
 } FSCState;
 
+typedef struct {
+  uint32_t start_;
+  uint32_t freq_;
+} Symbol;
+
 struct FSCDecoder {
+  FSCCodingMethod method_;
+  DecMethods methods_;
+
   FSCBitReader br_;
   FSC_STATUS status_;
   int log_tab_size_;
+  int max_symbol_;
   uint32_t out_size_;
+
   FSCState tab_[TAB_SIZE];   // ~16k for LOG_TAB_SIZE=12
+
+  Symbol symbols_[MAX_SYMBOLS];
+  uint8_t map_[MAX_TAB_SIZE];
+  AliasTable alias_;
 };
 
 //------------------------------------------------------------------------------
 // State table building
+
+static int SymbolsInit(FSCDecoder* dec,
+                       const uint32_t counts[], int max_symbol) {
+  uint32_t start = 0;
+  int s;
+  if (max_symbol > MAX_SYMBOLS || max_symbol <= 0) return 0;
+  for (s = 0; s < max_symbol; ++s) {
+    const uint32_t freq = counts[s];
+    dec->symbols_[s].start_ = start & 0xffff;
+    dec->symbols_[s].freq_ = freq;
+    start += freq;
+  }
+  return (start == (1 << dec->log_tab_size_));
+}
+
+//------------------------------------------------------------------------------
+
+static int BuildSymbolMap(FSCDecoder* dec,
+                          const uint32_t counts[], int max_symbol) {
+  if (!SymbolsInit(dec, counts, max_symbol)) return 0;
+  uint32_t start = 0;
+  int s;
+  for (s = 0; s < max_symbol; ++s) {
+    const uint32_t freq = counts[s];
+    int i;
+    for (i = 0; i < freq; ++i) dec->map_[start++] = s;
+  }
+  return 1;
+}
+
+static int BuildStateTableW(FSCDecoder* dec, const uint32_t counts[]) {
+  return BuildSymbolMap(dec, counts, dec->max_symbol_);
+}
+
+static uint8_t NextSymbol(const FSCDecoder* const dec, FSCStateW* const state) {
+  uint32_t rank;
+  const uint32_t r = (*state) & (MAX_TAB_SIZE - 1);
+  const uint8_t s = dec->map_[r];
+  rank = r - dec->symbols_[s].start_;
+  const int freq = dec->symbols_[s].freq_;
+  *state = freq * ((*state) >> MAX_LOG_TAB_SIZE) + rank;
+  return s;
+}
+
+//------------------------------------------------------------------------------
+
+static int BuildStateTableAliasW(FSCDecoder* dec, const uint32_t counts[]) {
+  return SymbolsInit(dec, counts, dec->max_symbol_) &&
+         AliasInit(&dec->alias_, counts, dec->max_symbol_);
+}
+
+static uint8_t NextSymbolAlias(const FSCDecoder* const dec, FSCStateW* const state) {
+  uint32_t rank;
+  const uint32_t r = (*state) & (MAX_TAB_SIZE - 1);
+  const uint8_t s = AliasSearchSymbol(&dec->alias_, r, &rank);
+  const int freq = dec->symbols_[s].freq_;
+  *state = freq * ((*state) >> MAX_LOG_TAB_SIZE) + rank;
+  return s;
+}
+
+//------------------------------------------------------------------------------
 
 static int Log2(uint32_t v) {
   int s = 31;
@@ -57,19 +152,20 @@ static int Log2(uint32_t v) {
   return s;
 }
 
-static int BuildStateTable(FSCDecoder* dec, uint32_t counts[], int max_symbol) {
+static int BuildStateTable(FSCDecoder* dec, const uint32_t counts[]) {
   int s, i, pos;
   uint16_t state[MAX_SYMBOLS];   // next state of symbol 's'
   FSCState* const tab = dec->tab_;
   const int log_tab_size = dec->log_tab_size_;
   const int tab_size = 1 << log_tab_size;
+  const int max_symbol = dec->max_symbol_;
 
   assert(max_symbol <= MAX_SYMBOLS && max_symbol > 0);
   for (s = 0; s < max_symbol; ++s) state[s] = counts[s];
 
   uint8_t* const symbols = (uint8_t*)malloc(tab_size * sizeof(*symbols));
   if (symbols == NULL) return 0;
-  if (!BuildSpreadTable_ptr(max_symbol, counts, log_tab_size, symbols)) {
+  if (!dec->methods_.spread(max_symbol, counts, log_tab_size, symbols)) {
     free(symbols);
     return 0;
   }
@@ -93,22 +189,133 @@ static int BuildStateTable(FSCDecoder* dec, uint32_t counts[], int max_symbol) {
 // Decoding loop
 
 static int GetBlock(FSCDecoder* dec, uint8_t* out, int size, FSCBitReader* br) {
-  if (dec->status_ == FSC_OK) {
-    const FSCState* state = dec->tab_;   // state_idx=0 at start
-    int next_nb_bits = dec->log_tab_size_;
-    int n;
-    for (n = 0; n < size; ++n) {
-      FSCFillBitWindow(br);
-      state += FSCSeeBits(br) & ((1 << next_nb_bits) - 1);
-      FSCDiscardBits(br, next_nb_bits);
-      *out++ = state->symbol_;
-      next_nb_bits = state->len_;
-      state += state->next_;
-    }
-    dec->status_ = dec->br_.eof_ ? FSC_EOF : FSC_OK;
-    return size;
+  const FSCState* state = dec->tab_;   // state_idx=0 at start
+  int next_nb_bits = dec->log_tab_size_;
+  int n;
+  for (n = 0; n < size; ++n) {
+    FSCFillBitWindow(br);
+    state += FSCSeeBits(br) & ((1 << next_nb_bits) - 1);
+    FSCDiscardBits(br, next_nb_bits);
+    *out++ = state->symbol_;
+    next_nb_bits = state->len_;
+    state += state->next_;
   }
-  return 0;
+  return !br->eof_;
+}
+
+//------------------------------------------------------------------------------
+
+#define RENORMALIZE_STATE(state) do {                         \
+  if ((state) < FSC_MAX) {                                    \
+    if (buf < buf_end) {                                      \
+      (state) = ((state) << FSC_BITS) | (*buf++);             \
+    } else {                                                  \
+      lbr.eof_ |= 1;                                          \
+    }                                                         \
+  }                                                           \
+} while (0)
+
+static int GetBlockW1(FSCDecoder* dec, uint8_t* out, int size,
+                      FSCBitReader* br) {
+  FSCBitReader lbr = *br;  // it's faster to make a local copy
+  const FSCType* buf = (const FSCType*)FSCBitAlign(&lbr);
+  const FSCType* const buf_end = (const FSCType*)FSCGetByteEnd(&lbr);
+  const Symbol* const syms = dec->symbols_;
+
+  lbr.eof_ = (buf == buf_end);
+  if (lbr.eof_) goto End;
+  FSCStateW state = *buf++;
+
+  int n;
+  for (n = 0; n < size; ++n) {
+    RENORMALIZE_STATE(state);
+    if (lbr.eof_) break;
+    out[n] = NextSymbol(dec, &state);
+  }
+  FSCSetReadBufferPos(&lbr, (const uint8_t*)buf);
+ End:
+  *br = lbr;
+  return !br->eof_;
+}
+
+static int GetBlockW2(FSCDecoder* dec, uint8_t* out, int size,
+                      FSCBitReader* br) {
+  FSCBitReader lbr = *br;  // it's faster to make a local copy
+  const FSCType* buf = (const FSCType*)FSCBitAlign(&lbr);
+  const FSCType* const buf_end = (const FSCType*)FSCGetByteEnd(&lbr);
+  const Symbol* const syms = dec->symbols_;
+  lbr.eof_ = (buf == buf_end);
+  if (lbr.eof_) goto End;
+  FSCStateW state0 = *buf++;
+  FSCStateW state1 = (size > 1) ? (*buf++) : 0;
+
+  int n;
+  for (n = 0; n + 1 < size; n += 2) {
+    RENORMALIZE_STATE(state0);
+    RENORMALIZE_STATE(state1);
+    if (lbr.eof_) break;
+    out[n + 0] = NextSymbol(dec, &state0);
+    out[n + 1] = NextSymbol(dec, &state1);
+  }
+  if (size & 1) {
+    RENORMALIZE_STATE(state0);
+    if (!lbr.eof_) out[n] = NextSymbol(dec, &state0);
+  }
+  FSCSetReadBufferPos(&lbr, (const uint8_t*)buf);
+ End:
+  *br = lbr;
+  return !br->eof_;
+}
+
+static int GetBlockAliasW1(FSCDecoder* dec, uint8_t* out, int size,
+                           FSCBitReader* br) {
+  FSCBitReader lbr = *br;  // it's faster to make a local copy
+  const FSCType* buf = (const FSCType*)FSCBitAlign(&lbr);
+  const FSCType* const buf_end = (const FSCType*)FSCGetByteEnd(&lbr);
+  const Symbol* const syms = dec->symbols_;
+  lbr.eof_ = (buf == buf_end);
+  if (lbr.eof_) goto End;
+  FSCStateW state = *buf++;
+
+  int n;
+  for (n = 0; n < size; ++n) {
+    RENORMALIZE_STATE(state);
+    if (lbr.eof_) break;
+    out[n] = NextSymbolAlias(dec, &state);
+  }
+  FSCSetReadBufferPos(&lbr, (const uint8_t*)buf);
+ End:
+  *br = lbr;
+  return !br->eof_;
+}
+
+static int GetBlockAliasW2(FSCDecoder* dec, uint8_t* out, int size,
+                           FSCBitReader* br) {
+  FSCBitReader lbr = *br;  // it's faster to make a local copy
+  const FSCType* buf = (const FSCType*)FSCBitAlign(&lbr);
+  const FSCType* const buf_end = (const FSCType*)FSCGetByteEnd(&lbr);
+  const Symbol* const syms = dec->symbols_;
+  lbr.eof_ = (buf == buf_end);
+  if (lbr.eof_) goto End;
+  FSCStateW state0 = *buf++;
+  FSCStateW state1 = (size > 1) ? (*buf++) : 0;
+
+  int n;
+  for (n = 0; n + 1 < size; n += 2) {
+    RENORMALIZE_STATE(state0);
+    RENORMALIZE_STATE(state1);
+    if (lbr.eof_) break;
+    out[n + 0] = NextSymbolAlias(dec, &state0);
+    out[n + 1] = NextSymbolAlias(dec, &state1);
+  }
+  if (size & 1) {
+    RENORMALIZE_STATE(state0);
+    if (!lbr.eof_) out[n] = NextSymbolAlias(dec, &state0);
+  }
+  FSCSetReadBufferPos(&lbr, (const uint8_t*)buf);
+ End:
+  *br = lbr;
+  return !br->eof_;
 }
 
 //------------------------------------------------------------------------------
@@ -139,11 +346,11 @@ static int ReadSequence(uint32_t seq[], int len, int sparse, int nb_bits,
   return 1;
 }
 
-static int ReadHeader(FSCDecoder* dec, FSCBitReader* br) {
-  uint32_t counts[TAB_SIZE];
+static int ReadHeader(FSCDecoder* dec, FSCBitReader* br, uint32_t counts[TAB_SIZE]) {
   const int log_tab_size = dec->log_tab_size_;
   const uint32_t tab_size = 1 << log_tab_size;
   const int max_symbol = 1 + FSCReadBits(br, 8);
+  dec->max_symbol_ = max_symbol;
   if (max_symbol < HDR_SYMBOL_LIMIT) {  // Use method #1 for small alphabet
     if (!ReadSequence(counts, max_symbol, 2, log_tab_size, br)) {
       return 0;
@@ -164,12 +371,15 @@ static int ReadHeader(FSCDecoder* dec, FSCBitReader* br) {
         FSCDecoder dec2;
         memset(&dec2, 0, sizeof(dec2));
         dec2.log_tab_size_ = TAB_HDR_BITS;
+        dec2.max_symbol_ = hlen;
+        dec2.method_ = CODING_METHOD_BUCKET;
+        dec2.methods_ = kDecMethods[dec2.method_];
         if (hlen > log_tab_size) return 0;
-        if (!BuildStateTable(&dec2, bHisto, hlen)) {
+        if (!BuildStateTable(&dec2, bHisto)) {
           fprintf(stderr, "Sub-Decoder initialization failed!\n");
           return 0;
         }
-        GetBlock(&dec2, bins, max_symbol - 1, br);
+        dec2.methods_.get_block(&dec2, bins, max_symbol - 1, br);
       }
       {
         int i;
@@ -186,9 +396,32 @@ static int ReadHeader(FSCDecoder* dec, FSCBitReader* br) {
       }
     }
   }
-  if (br->eof_) return 0;
-  return BuildStateTable(dec, counts, max_symbol);
+  return !br->eof_;
 }
+
+static int ReadParams(FSCDecoder* dec, FSCBitReader* br,
+                      uint32_t counts[MAX_SYMBOLS]) {
+  dec->log_tab_size_ = LOG_TAB_SIZE - FSCReadBits(br, 4);
+  return ReadHeader(dec, br, counts);
+}
+
+static int ReadParamsW(FSCDecoder* dec, FSCBitReader* br,
+                       uint32_t counts[MAX_SYMBOLS]) {
+  dec->log_tab_size_ = MAX_LOG_TAB_SIZE;
+  return ReadHeader(dec, br, counts);
+}
+
+static const DecMethods kDecMethods[CODING_METHOD_LAST] = {
+  { ReadParams, GetBlock, BuildStateTable, BuildSpreadTableBucket },
+  { ReadParams, GetBlock, BuildStateTable, BuildSpreadTableReverse },
+  { ReadParams, GetBlock, BuildStateTable, BuildSpreadTableModulo },
+  { ReadParams, GetBlock, BuildStateTable, BuildSpreadTablePack },
+
+  { ReadParamsW, GetBlockW1, BuildStateTableW, NULL },
+  { ReadParamsW, GetBlockW2, BuildStateTableW, NULL },
+  { ReadParamsW, GetBlockAliasW1, BuildStateTableAliasW, NULL },
+  { ReadParamsW, GetBlockAliasW2, BuildStateTableAliasW, NULL },
+};
 
 //------------------------------------------------------------------------------
 
@@ -197,14 +430,22 @@ FSCDecoder* FSCInit(const uint8_t* input, size_t len) {
   if (dec == NULL) return NULL;
 
   FSCInitBitReader(&dec->br_, input, len);
-  dec->log_tab_size_ = LOG_TAB_SIZE - FSCReadBits(&dec->br_, 4);
   dec->out_size_ = 0;
   int i;
   for (i = 0; i < 8 && FSCReadBits(&dec->br_, 1); ++i) {
     dec->out_size_ |= FSCReadBits(&dec->br_, 8) << (8 * i);
   }
 
-  dec->status_ = ReadHeader(dec, &dec->br_) ? FSC_OK : FSC_ERROR;
+  dec->method_ = (FSCCodingMethod)FSCReadBits(&dec->br_, 3);
+  dec->methods_ = kDecMethods[dec->method_];
+
+  uint32_t counts[MAX_SYMBOLS];
+  if (!dec->methods_.read_params(dec, &dec->br_, counts) ||
+      !dec->methods_.build_tables(dec, counts)) {
+    dec->status_ = FSC_ERROR;
+  } else {
+    dec->status_ = FSC_OK;
+  }
   return dec;
 }
 
@@ -223,11 +464,16 @@ int FSCDecompress(FSCDecoder* dec, uint8_t** out, size_t* out_size) {
   *out_size = dec->out_size_;
   size_t size = dec->out_size_;
   uint8_t* ptr = *out;
+
+  FSCGetBlockFunc get_block = dec->methods_.get_block;
   while (size > 0 && dec->status_ == FSC_OK) {
-    const int got =
-        GetBlock(dec, ptr, (size > BLOCK_SIZE) ? BLOCK_SIZE : size, &dec->br_);
-    ptr += got;
-    size -= got;
+    const int next_size = (size > BLOCK_SIZE) ? BLOCK_SIZE : (int)size;
+    if (!get_block(dec, ptr, next_size, &dec->br_)) {
+      dec->status_ = FSC_EOF;
+      break;
+    }
+    ptr += next_size;
+    size -= next_size;
   }
   if (dec->status_ == FSC_ERROR) {
     free(*out);

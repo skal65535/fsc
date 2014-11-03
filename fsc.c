@@ -42,17 +42,47 @@ static void Help() {
   printf("-d           : decompression mode\n");
   printf("-s           : don't emit output, just print stats\n");
   printf("-l           : change log-table-size (in [2..14], default 12)\n");
+  printf("-w           : use word-based coding.\n");
+  printf("-w2          : use word-based coding 2x interleave.\n");
+  printf("-a           : use word-based coding + alias.\n");
+  printf("-a2          : use word-based coding + alias + interleave.\n");
   printf("-mod         : use modulo spread function\n");
   printf("-rev         : use reverse spread function\n");
-  printf("-exp         : use experimental spread function\n");
-  printf("-bucket      : use bucket-sort spread function (default)\n");
+  printf("-pack        : use pack spread function\n");
+  printf("-buck        : use bucket spread function\n");
   printf("-h           : this help\n");
   exit(0);
 }
 
+static int FSCParseCodingMethodOpt(const char opt[],
+                                   FSCCodingMethod* const method) {
+  if (!strcmp(opt, "-buck")) {
+    *method = CODING_METHOD_BUCKET;
+  } else if (!strcmp(opt, "-rev")) {
+    *method = CODING_METHOD_REVERSE;
+  } else if (!strcmp(opt, "-mod")) {
+    *method = CODING_METHOD_MODULO;
+  } else if (!strcmp(opt, "-pack")) {
+    *method = CODING_METHOD_PACK;
+  } else if (!strcmp(opt, "-w")) {
+    *method = CODING_METHOD_16B;
+  } else if (!strcmp(opt, "-w2")) {
+    *method = CODING_METHOD_16B_2X;
+  } else if (!strcmp(opt, "-a")) {
+    *method = CODING_METHOD_16B_ALIAS;
+  } else if (!strcmp(opt, "-a2")) {
+    *method = CODING_METHOD_16B_ALIAS_2X;
+  } else {
+    return 0;
+  }
+  return 1;
+}
+
+
 int main(int argc, const char* argv[]) {
   int log_tab_size = 12;
   int compress = 1;
+  FSCCodingMethod method = CODING_METHOD_16B_2X;
   int stats_only = 0;
   int ok = 0;
   int c;
@@ -62,14 +92,10 @@ int main(int argc, const char* argv[]) {
       log_tab_size = atoi(argv[++c]);
       if (log_tab_size > LOG_TAB_SIZE) log_tab_size = LOG_TAB_SIZE;
       else if (log_tab_size < 2) log_tab_size = 2;
-    } else if (!strcmp(argv[c], "-mod")) {
-      BuildSpreadTable_ptr = BuildSpreadTableModulo;
-    } else if (!strcmp(argv[c], "-mod")) {
-      BuildSpreadTable_ptr = BuildSpreadTableBucket;
-    } else if (!strcmp(argv[c], "-rev")) {
-      BuildSpreadTable_ptr = BuildSpreadTableReverse;
-    } else if (!strcmp(argv[c], "-exp")) {
-      BuildSpreadTable_ptr = ExperimentalSpread;
+    } else if (FSCParseCodingMethodOpt(argv[c], &method)) {
+      continue;
+    } else if (!strcmp(argv[c], "-m") && c + 1 < argc) {
+      method = (FSCCodingMethod)atoi(argv[++c]);
     } else if (!strcmp(argv[c], "-s")) {
       stats_only = 1;
     } else if (!strcmp(argv[c], "-c")) {
@@ -109,7 +135,7 @@ int main(int argc, const char* argv[]) {
   MyClock start, tmp;
   if (compress) {   // encoding
     GetElapsed(&start, NULL);
-    ok = FSCEncode(in, in_size, &out, &out_size, log_tab_size);
+    ok = FSCEncode(in, in_size, &out, &out_size, log_tab_size, method);
     if (!ok) {
       fprintf(stderr, "ERROR while encoding!\n");
       goto End;

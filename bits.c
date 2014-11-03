@@ -41,12 +41,6 @@
 #define RSWAP le16toh
 #endif
 
-#if (WBYTES == 4)
-#define WSWAP htole32
-#else
-#define WSWAP htole16
-#endif
-
 //------------------------------------------------------------------------------
 // BitReader
 
@@ -66,6 +60,24 @@ void FSCInitBitReader(FSCBitReader* const br,
   for (i = 0; i < sizeof(br->bits_) && i < length; ++i) {
     br->bits_ |= ((fsc_val_t)(*br->buf_++)) << (8 * i);
   }
+}
+
+void FSCSetReadBufferPos(FSCBitReader* const br, const uint8_t* buf) {
+  FSCInitBitReader(br, buf, br->end_ - buf);
+}
+
+const uint8_t* FSCGetBytePos(FSCBitReader* const br) {
+  return br->buf_;
+}
+const uint8_t* FSCGetByteEnd(FSCBitReader* const br) {
+  return br->end_;
+}
+const uint8_t* FSCBitAlign(FSCBitReader* const br) {
+  br->buf_ -= (LBITS - br->bit_pos_) >> 3;
+  br->bit_pos_ = 0;
+  br->bits_ = 0;
+  br->eof_ |= (br->buf_ <= br->end_);
+  return br->buf_;
 }
 
 void FSCDoFillBitWindow(FSCBitReader* const br) {
@@ -98,10 +110,9 @@ uint32_t FSCReadBits(FSCBitReader* const br, int nb) {
 //------------------------------------------------------------------------------
 // BitWriter
 
-// 'new_size' is in fsc_wval_t units
 static int SetSize(FSCBitWriter* const bw, size_t new_size) {
   if (new_size < 4096) new_size = 4096;
-  fsc_wval_t* const new_buf = (fsc_wval_t*)malloc(new_size * sizeof(*new_buf));
+  uint8_t* const new_buf = (uint8_t*)malloc(new_size * sizeof(*new_buf));
   if (new_buf == NULL) {
     bw->error_ = 1;
     return 0;
@@ -121,8 +132,8 @@ static int GrowSize(FSCBitWriter* const bw) {
 }
 
 static void CheckRoom(FSCBitWriter* const bw, int nb) {
-  uint8_t* const cur = (uint8_t*)bw->cur_;
-  uint8_t* const end = (uint8_t*)bw->end_;
+  uint8_t* const cur = bw->cur_;
+  uint8_t* const end = bw->end_;
   if (&cur[(nb + 7) >> 3] > end) GrowSize(bw);
 }
 
@@ -133,14 +144,13 @@ int FSCBitWriterInit(FSCBitWriter* const bw, size_t expected_size) {
 
 void FSCBitWriterFlush(FSCBitWriter* const bw) {
   CheckRoom(bw, bw->used_);
-  uint8_t* p = (uint8_t*)bw->cur_;
   while (bw->used_ > 0) {
-    *p++ = bw->bits_;
+    *bw->cur_++ = bw->bits_;
     bw->bits_ >>= 8;
     bw->used_ -= 8;
   }
-  bw->cur_ = (fsc_wval_t*)p;   // alignment might be off, that's ok
   bw->used_ = 0;
+  bw->bits_ = 0;
 }
 
 void FSCBitWriterDestroy(FSCBitWriter* const bw) {
@@ -150,7 +160,18 @@ void FSCBitWriterDestroy(FSCBitWriter* const bw) {
   }
 }
 
-void FSCWriteBits(FSCBitWriter* const bw, int nb, uint32_t bits) {
+#if (defined(__x86_64__) || defined(_M_X64))     // 64 bits
+typedef uint32_t fsc_wval_t;
+#define WBYTES 4
+#define WSWAP htole32
+#else                                            // 32 bits
+typedef uint16_t fsc_wval_t;
+#define WBYTES 2
+#define WSWAP htole16
+#endif
+#define WBITS (WBYTES * 8)
+
+void FSCWriteBits(FSCBitWriter* const bw, uint32_t bits, int nb) {
   assert(nb <= MAX_BITS);
   assert(bits < (1 << nb));
   if (nb > 0) {
@@ -158,7 +179,8 @@ void FSCWriteBits(FSCBitWriter* const bw, int nb, uint32_t bits) {
     bw->used_ += nb;
     if (bw->used_ >= WBITS) {
       CheckRoom(bw, WBITS);
-      *bw->cur_++ = WSWAP(bw->bits_);
+      *(fsc_wval_t*)bw->cur_ = WSWAP(bw->bits_);
+      bw->cur_ += WBYTES;
       bw->bits_ >>= WBITS;
       bw->used_ -= WBITS;
     }
@@ -166,13 +188,17 @@ void FSCWriteBits(FSCBitWriter* const bw, int nb, uint32_t bits) {
 }
 
 int FSCAppend(FSCBitWriter* const bw, const uint8_t* const buf, size_t len) {
-  const size_t extra_size = (len - 1) / sizeof(fsc_wval_t) + 1;
   FSCBitWriterFlush(bw);
-  if (bw->cur_ + extra_size > bw->end_ && !SetSize(bw, extra_size)) {
-    return 0;
+  uint8_t* const new_end = bw->cur_ + len;
+  if (bw->cur_ + len > bw->end_) {
+    const size_t min_len = new_end - bw->buf_;
+    size_t request = (bw->end_  - bw->buf_) * 2;  // double buffer
+    if (request < min_len) request = min_len;
+    request = ((request >> 10) + 1) << 10;
+    if (!SetSize(bw, request)) return 0;
   }
-  memcpy(bw->cur_, buf, extra_size * sizeof(fsc_wval_t));
-  bw->cur_ += extra_size;
+  memcpy(bw->cur_, buf, len);
+  bw->cur_ += len;
   return 1;
 }
 

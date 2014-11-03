@@ -27,7 +27,6 @@
 void FSCCountSymbols(const uint8_t* in, size_t in_size,
                      uint32_t counts[MAX_SYMBOLS]) {
   size_t n;
-  assert(in_size < 8 * sizeof(counts[0]));
   memset(counts, 0, MAX_SYMBOLS * sizeof(counts[0]));
   for (n = 0; n < in_size; ++n) ++counts[in[n]];
 }
@@ -221,9 +220,3 @@ int BuildSpreadTablePack(int max_symbol, const uint32_t counts[],
 }
 
 //------------------------------------------------------------------------------
-
-int (*BuildSpreadTable_ptr)(int max_symbol, const uint32_t counts[],
-                             int log_tab_size, uint8_t symbols[])
-    = BuildSpreadTableBucket;   // default
-
-// -----------------------------------------------------------------------------

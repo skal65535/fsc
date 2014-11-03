@@ -35,6 +35,27 @@
 // disabled for now (so we investigate core algo):
 // #define CRYPTO_KEY 0x3fdc
 
+// Compression methods
+typedef enum {
+  CODING_METHOD_BUCKET = 0,
+  CODING_METHOD_REVERSE,
+  CODING_METHOD_MODULO,
+  CODING_METHOD_PACK,
+
+  CODING_METHOD_16B,
+  CODING_METHOD_16B_2X,   // default
+  CODING_METHOD_16B_ALIAS,
+  CODING_METHOD_16B_ALIAS_2X,
+
+  CODING_METHOD_LAST
+} FSCCodingMethod;
+
+typedef uint32_t FSCStateW;
+typedef uint16_t FSCType;  // storage type
+#define FSC_BITS      16
+#define FSC_MAX       ((FSCStateW)1 << FSC_BITS)
+#define FSC_BITS_MASK (((FSCStateW)1 << FSC_BITS) - 1)
+
 // derived params
 #define TAB_SIZE (1U << LOG_TAB_SIZE)
 #define TAB_MASK (TAB_SIZE - 1)
@@ -65,7 +86,7 @@ void FSCDelete(FSCDecoder* dec);
 // Result is in *out, must deallocated using free()
 int FSCEncode(const uint8_t* in, size_t in_size,
               uint8_t** out, size_t* out_size,
-              int log_tab_size);
+              int log_tab_size, FSCCodingMethod method);
 
 // utils
 void FSCCountSymbols(const uint8_t* in, size_t in_size,
@@ -73,11 +94,13 @@ void FSCCountSymbols(const uint8_t* in, size_t in_size,
 int FSCNormalizeCounts(uint32_t counts[MAX_SYMBOLS], int max_symbol,
                        int log_tab_size);
 
+//
 //------------------------------------------------------------------------------
 // mapping function (common to enc/dec)
 
-extern int (*BuildSpreadTable_ptr)(int max_symbol, const uint32_t counts[],
-                                   int log_tab_size, uint8_t symbols[]);
+// returns 0 in case of error
+typedef int (*FSCBuildSpreadTableFunc)(int max_symbol, const uint32_t counts[],
+                                       int log_tab_size, uint8_t symbols[]);
 
 extern int BuildSpreadTableBucket(int max_symbol, const uint32_t counts[],
                                   int log_tab_size, uint8_t symbols[]);
@@ -85,5 +108,7 @@ extern int BuildSpreadTableReverse(int max_symbol, const uint32_t counts[],
                                    int log_tab_size, uint8_t symbols[]);
 extern int BuildSpreadTableModulo(int max_symbol, const uint32_t counts[],
                                   int log_tab_size, uint8_t symbols[]);
+extern int BuildSpreadTablePack(int max_symbol, const uint32_t counts[],
+                                int log_tab_size, uint8_t symbols[]);
 
 #endif  // FSC_FSC_H_

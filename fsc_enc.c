@@ -26,11 +26,33 @@
 #include <math.h>
 
 #include "./bits.h"
+#include "./alias.h"
+
+#define USE_INV_DIV  // for speeding up encoder
+
+typedef struct FSCEncoder FSCEncoder;
 
 // #define SHOW_SIMULATION
 
 //------------------------------------------------------------------------------
 // States and tables
+
+typedef void (*FSCPutBlockFunc)(const FSCEncoder* enc, const uint8_t* in, int size,
+                                FSCBitWriter* const bw);
+typedef int (*FSCBuildTablesFunc)(FSCEncoder* const enc, const uint32_t counts[]);
+typedef int (*FSCWriteParamsFunc)(FSCEncoder* const enc,
+                                  const uint32_t counts[MAX_SYMBOLS],
+                                  FSCBitWriter* const bw);
+
+typedef struct {   // encoding interface
+  FSCWriteParamsFunc      write_params;
+  FSCPutBlockFunc         put_block;
+  FSCBuildTablesFunc      build_tables;
+  FSCBuildSpreadTableFunc spread;
+} EncMethods;
+static const EncMethods kEncMethods[CODING_METHOD_LAST];
+
+//------------------------------------------------------------------------------
 
 typedef struct {
   int32_t offset_;
@@ -39,12 +61,27 @@ typedef struct {
 } transf_t;
 
 typedef struct {
+  uint32_t start_;
+  uint32_t freq_;
+#if defined(USE_INV_DIV)
+  uint64_t mult_;
+  uint32_t imult_;
+#endif
+} Symbol;
+
+struct FSCEncoder {
+  int method_;
+  EncMethods methods_;
   int max_symbol_;
   uint16_t states_[TAB_SIZE];
   transf_t transforms_[MAX_SYMBOLS];
   size_t in_size_;
   int log_tab_size_;
-} FSCEncoder;
+
+  Symbol symbols_[MAX_SYMBOLS];
+  uint16_t alias_map_[MAX_TAB_SIZE];
+};
+
 
 //------------------------------------------------------------------------------
 
@@ -94,7 +131,7 @@ static int BuildTables(FSCEncoder* const enc, const uint32_t counts[]) {
   if (symbols == NULL) return 0;
 
   // Prepare map from symbol to state
-  if (!BuildSpreadTable_ptr(max_symbol, counts, log_tab_size, symbols)) {
+  if (!enc->methods_.spread(max_symbol, counts, log_tab_size, symbols)) {
     free(symbols);
     return 0;
   }
@@ -106,17 +143,79 @@ static int BuildTables(FSCEncoder* const enc, const uint32_t counts[]) {
   return max_symbol;
 }
 
+#if defined(USE_INV_DIV)
+
+// As mentioned by Ryg:
+//   Alverson 1991: "Integer Division Using Reciprocals"
+//   http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.33.1710
+#define MULT_SHIFT (8 * sizeof(FSCStateW) + FSC_BITS)
+#define DIV_BY_MULT(A, B) (((A) * (B)) >> MULT_SHIFT)
+
+void EncodeDividers(Symbol syms[], int max_symbol) {
+  int s;
+  for (s = 0; s < max_symbol; ++s) {
+    Symbol* const sym = &syms[s];
+    const uint32_t freq = sym->freq_;
+    sym->imult_ = (1u << MAX_LOG_TAB_SIZE) - freq;
+    if (freq > 0) {
+      sym->mult_ = ((1ull << MULT_SHIFT) + freq - 1) / freq;
+    } else {
+      sym->mult_ = 0;  // shouldn't be needed
+    }
+  }
+}
+#endif
+
+static int BuildTablesW(FSCEncoder* const enc, const uint32_t counts[]) {
+  int s;
+  uint64_t start = 0;
+  const int log_tab_size = enc->log_tab_size_;
+  const int tab_size = 1 << log_tab_size;
+  const int max_symbol = enc->max_symbol_;
+
+  for (s = 0; s < max_symbol; ++s) {
+    enc->symbols_[s].start_ = start;
+    enc->symbols_[s].freq_ = counts[s];
+    start += counts[s];
+  }
+  if (start != tab_size) return 0;   // not normalized?
+
+#if defined(USE_INV_DIV)
+  EncodeDividers(enc->symbols_, max_symbol);
+#endif
+  return 1;
+}
+
+static int BuildTablesAliasW(FSCEncoder* const enc, const uint32_t counts[]) {
+  return BuildTablesW(enc, counts) &&
+         AliasBuildEncMap(counts, enc->max_symbol_, enc->alias_map_);
+}
+
 static int EncoderInit(FSCEncoder* const enc, uint32_t counts[],
-                       int max_symbol, int log_tab_size) {
+                       int max_symbol, int log_tab_size,
+                       FSCCodingMethod method) {
+  int ok = 0;
   memset(enc, 0, sizeof(*enc));
   if (max_symbol == 0) max_symbol = MAX_SYMBOLS;
-  if (log_tab_size < 1 || log_tab_size > LOG_TAB_SIZE) return 0;
+  if (log_tab_size < 1) return 0;
+  if (method >= CODING_METHOD_LAST) return 0;
+  enc->method_ = method;
+  enc->methods_ = kEncMethods[method];
+
+  if (method >= CODING_METHOD_16B) {
+    log_tab_size = MAX_LOG_TAB_SIZE;
+  } else if (log_tab_size > LOG_TAB_SIZE) {
+    fprintf(stderr, "!! log_tab_size: %d\n", log_tab_size);
+    return 0;
+  }
   enc->log_tab_size_ = log_tab_size;
-  enc->max_symbol_ = FSCNormalizeCounts(counts, max_symbol, enc->log_tab_size_);
-  if (enc->max_symbol_ < 1) return 0;
-  if (enc->max_symbol_ > (1 << enc->log_tab_size_)) return 0;
-  if (!BuildTables(enc, counts)) return 0;
-  return 1;
+  enc->max_symbol_ = FSCNormalizeCounts(counts, max_symbol, log_tab_size);
+  if (enc->max_symbol_ < 1) {
+    fprintf(stderr, "!! enc->max_symbol_: %d\n", enc->max_symbol_);
+    return 0;
+  }
+  if (enc->max_symbol_ > (1 << log_tab_size)) return 0;
+  return enc->methods_.build_tables(enc, counts);
 }
 
 // -----------------------------------------------------------------------------
@@ -145,16 +244,164 @@ static void PutBlock(const FSCEncoder* enc, const uint8_t* in, int size,
     state = states[(state >> nb_bits) + transf->offset_];
   }
   // Direction reversal
-  FSCWriteBits(bw, log_tab_size, state & (tab_size - 1));
+  FSCWriteBits(bw, state & (tab_size - 1), log_tab_size);
   for (k = 0; k < size - 1; ++k) {   // no need to write the last token
-    FSCWriteBits(bw, tokens[k].nb_bits_, tokens[k].val_);
+    FSCWriteBits(bw, tokens[k].val_, tokens[k].nb_bits_);
   }
 }
 
 // -----------------------------------------------------------------------------
+
+#define FLUSH_STATE(state, limit) do {                                     \
+  if ((state) >= (limit)) {                                                \
+    output[--pos] = (FSCType)((state) & FSC_BITS_MASK);                    \
+    (state) >>= FSC_BITS;                                                  \
+  }                                                                        \
+} while (0)
+
+#if defined(USE_INV_DIV)
+// Alternative version, which is a little slower than below:
+//   const FSCStateW R = state - q * freq;    // <- that's 'state % freq'
+//   state = (q << MAX_LOG_TAB_SIZE) + R + start;
+#define RENORMALIZE_STATE(state, s) do {                                   \
+  const uint32_t start = (s)->start_;                                      \
+  const uint32_t q = DIV_BY_MULT(state, s->mult_);                         \
+  state = q * s->imult_ + start + state;                                   \
+} while (0)
+#else
+// reference calculation
+#define RENORMALIZE_STATE(state, s) do {                                   \
+  const uint32_t freq = (s)->freq_, start = (s)->start_;                   \
+  state = ((state / freq) << MAX_LOG_TAB_SIZE) + (state % freq) + start;   \
+} while (0)
+// slower version:
+//    (state / freq) * ((1 << MAX_LOG_TAB_SIZE) - freq) + state + start;
+#endif  // USE_INV_DIV
+
+// with ALIAS:
+#if defined(USE_INV_DIV)
+#define RENORMALIZE_STATE_ALIAS(state, s) do {                             \
+  const uint32_t freq = (s)->freq_, start = (s)->start_;                   \
+  const uint32_t q = DIV_BY_MULT(state, s->mult_);                         \
+  const uint32_t R = state - q * freq;    /* <- that's 'state % freq' */   \
+  state = (q << MAX_LOG_TAB_SIZE) + enc->alias_map_[R + start];            \
+} while (0)
+#else
+#define RENORMALIZE_STATE_ALIAS(state, s) do {                             \
+  const uint32_t freq = (s)->freq_, start = (s)->start_;                   \
+  state = ((state / freq) << MAX_LOG_TAB_SIZE)                             \
+        + enc->alias_map_[(state % freq) + start];                         \
+} while (0)
+#endif   // USE_INV_DIV
+
+static int DoPutBlockW1(const FSCEncoder* enc, const uint8_t* in, int size,
+                        FSCType output[BLOCK_SIZE]) {
+  int pos = BLOCK_SIZE;
+  FSCStateW state = FSC_MAX;
+  const FSCStateW norm = (FSC_MAX >> MAX_LOG_TAB_SIZE) << FSC_BITS;
+  int k = size;
+  assert(enc->log_tab_size_ == MAX_LOG_TAB_SIZE);
+  while (k > 0) {
+    const Symbol* const s = &enc->symbols_[in[--k]];
+    FLUSH_STATE(state, norm * s->freq_);
+    RENORMALIZE_STATE(state, s);
+  }
+  FLUSH_STATE(state, 0);
+  FLUSH_STATE(state, 0);
+  return pos;
+}
+
+static int DoPutBlockW2(const FSCEncoder* enc, const uint8_t* in, int size,
+                        FSCType output[BLOCK_SIZE]) {
+  int pos = BLOCK_SIZE;
+  FSCStateW state0 = FSC_MAX, state1 = FSC_MAX;
+  const FSCStateW norm = (FSC_MAX >> MAX_LOG_TAB_SIZE) << FSC_BITS;
+  int k = size;
+  assert(enc->log_tab_size_ == MAX_LOG_TAB_SIZE);
+  if (size & 1) {
+    const Symbol* const s1 = &enc->symbols_[in[--k]];
+    FLUSH_STATE(state1, norm * s1->freq_);
+    RENORMALIZE_STATE(state1, s1);
+  }
+  while (k > 0) {
+    const Symbol* const s0 = &enc->symbols_[in[--k]];
+    const Symbol* const s1 = &enc->symbols_[in[--k]];
+    FLUSH_STATE(state0, norm * s0->freq_);
+    FLUSH_STATE(state1, norm * s1->freq_);
+    RENORMALIZE_STATE(state0, s0);
+    RENORMALIZE_STATE(state1, s1);
+  }
+  FLUSH_STATE(state0, 0);
+  FLUSH_STATE(state1, 0);
+  FLUSH_STATE(state0, 0);
+  FLUSH_STATE(state1, 0);
+  return pos;
+}
+
+static int DoPutBlockAliasW1(const FSCEncoder* enc, const uint8_t* in, int size,
+                             FSCType output[BLOCK_SIZE]) {
+  int pos = BLOCK_SIZE;
+  FSCStateW state = FSC_MAX;
+  const FSCStateW norm = (FSC_MAX >> MAX_LOG_TAB_SIZE) << FSC_BITS;
+  int k = size;
+  assert(enc->log_tab_size_ == MAX_LOG_TAB_SIZE);
+  while (k > 0) {
+    const Symbol* const s = &enc->symbols_[in[--k]];
+    FLUSH_STATE(state, norm * s->freq_);
+    RENORMALIZE_STATE_ALIAS(state, s);
+  }
+  FLUSH_STATE(state, 0);
+  FLUSH_STATE(state, 0);
+  return pos;
+}
+
+static int DoPutBlockAliasW2(const FSCEncoder* enc, const uint8_t* in, int size,
+                             FSCType output[BLOCK_SIZE]) {
+  int pos = BLOCK_SIZE;
+  FSCStateW state0 = FSC_MAX, state1 = FSC_MAX;
+  const FSCStateW norm = (FSC_MAX >> MAX_LOG_TAB_SIZE) << FSC_BITS;
+  int k = size;
+  assert(enc->log_tab_size_ == MAX_LOG_TAB_SIZE);
+  if (size & 1) {
+    const Symbol* const s1 = &enc->symbols_[in[--k]];
+    FLUSH_STATE(state1, norm * s1->freq_);
+    RENORMALIZE_STATE_ALIAS(state1, s1);
+  }
+  while (k > 0) {
+    const Symbol* const s0 = &enc->symbols_[in[--k]];
+    const Symbol* const s1 = &enc->symbols_[in[--k]];
+    FLUSH_STATE(state0, norm * s0->freq_);
+    FLUSH_STATE(state1, norm * s1->freq_);
+    RENORMALIZE_STATE_ALIAS(state0, s0);
+    RENORMALIZE_STATE_ALIAS(state1, s1);
+  }
+  FLUSH_STATE(state0, 0);
+  FLUSH_STATE(state1, 0);
+  FLUSH_STATE(state0, 0);
+  FLUSH_STATE(state1, 0);
+  return pos;
+}
+
+// -----------------------------------------------------------------------------
+
+#define PUT_BLOCK_WRAPPER(FUNC_NAME, CALL)                                  \
+static void FUNC_NAME(const FSCEncoder* enc, const uint8_t* in, int size,   \
+                      FSCBitWriter* const bw) {                             \
+  FSCType output[BLOCK_SIZE];                                               \
+  const int pos = CALL(enc, in, size, output);                              \
+  FSCAppend(bw, (const uint8_t*)&output[pos],                               \
+                      (BLOCK_SIZE - pos) * sizeof(output[0]));              \
+}
+
+PUT_BLOCK_WRAPPER(PutBlockW1, DoPutBlockW1)
+PUT_BLOCK_WRAPPER(PutBlockW2, DoPutBlockW2)
+PUT_BLOCK_WRAPPER(PutBlockAliasW1, DoPutBlockAliasW1)
+PUT_BLOCK_WRAPPER(PutBlockAliasW2, DoPutBlockAliasW2)
+
+// -----------------------------------------------------------------------------
 // Coding
 
-static int SparseIsBetter(uint32_t seq[], int len, int nb_bits) {
+static int SparseIsBetter(const uint32_t seq[], int len, int nb_bits) {
   uint32_t total = 1 << nb_bits;
   uint32_t half = total >> 1;
   int i;
@@ -171,24 +418,24 @@ static int SparseIsBetter(uint32_t seq[], int len, int nb_bits) {
   return (saved_bits > 0);
 }
 
-static int WriteSequence(uint32_t seq[], int len, int sparse, int nb_bits,
-                         FSCBitWriter* bw) {
+static int WriteSequence(const uint32_t seq[], int len, int sparse, int nb_bits,
+                         FSCBitWriter* const bw) {
   uint32_t total = 1 << nb_bits;
   uint32_t half = total >> 1;
   int i;
   int total_bits = 0;
   if (sparse == 2) {
     sparse = SparseIsBetter(seq, len, nb_bits);
-    FSCWriteBits(bw, 1, sparse);
+    FSCWriteBits(bw, sparse, 1);
   }
   for (i = 0; i < len - 1; ++i) {
     const uint32_t c = seq[i];
     if (sparse) {
-      FSCWriteBits(bw, 1, c > 0);
+      FSCWriteBits(bw, c > 0, 1);
       total_bits += 1;
       if (c == 0) continue;
     }
-    FSCWriteBits(bw, nb_bits, c);
+    FSCWriteBits(bw, c, nb_bits);
     total_bits += nb_bits;
     total -= c;
     if (total < half) {
@@ -201,22 +448,25 @@ static int WriteSequence(uint32_t seq[], int len, int sparse, int nb_bits,
 }
 
 // Write the distribution table as header
-static int WriteHeader(FSCEncoder* const enc, uint32_t counts[MAX_SYMBOLS],
+static int WriteHeader(FSCEncoder* const enc, const uint32_t counts[MAX_SYMBOLS],
                        FSCBitWriter* bw) {
   const int max_symbol = enc->max_symbol_;
   const int log_tab_size = enc->log_tab_size_;
   uint32_t tab_size = 1u << log_tab_size;
-  FSCWriteBits(bw, 8, max_symbol - 1);
+  FSCWriteBits(bw, max_symbol - 1, 8);
 
   if (max_symbol < HDR_SYMBOL_LIMIT) {  // Method #1 for small alphabet
     if (WriteSequence(counts, max_symbol, 2, log_tab_size, bw) < 0) {
       return 0;
     }
   } else {  // Method #2 for large alphabet
+    int ok = 0;
     uint8_t bins[MAX_SYMBOLS];
-    uint32_t bHisto[LOG_TAB_SIZE + 1] = { 0 };
+    uint32_t* const bHisto =
+        (uint32_t*)calloc(sizeof(*bHisto), log_tab_size + 1);
     uint16_t bits[MAX_SYMBOLS];
     int i;
+    if (bHisto == NULL) return 0;
     // Decompose into prefix and suffix
     {
       uint32_t total = tab_size;
@@ -224,36 +474,52 @@ static int WriteHeader(FSCEncoder* const enc, uint32_t counts[MAX_SYMBOLS],
         const int c = counts[i] + 1;
         int bin, b;
         for (bin = 0, b = c; b != 1; ++bin) { b >>= 1; }
-        if (bin > log_tab_size) return 0;
+        if (bin > log_tab_size) goto Error;
         bins[i] = bin;             // prefix
         bits[i] = c - (1 << bin);  // suffix
         ++bHisto[bin];             // record prefix distribution
-        if (total < counts[i]) return 0;
+        if (total < counts[i]) goto Error;
         total -= counts[i];
       }
-      if (total != 0) return 0;   // Unnormalized distribution!?
+      if (total != 0) goto Error;   // Unnormalized distribution!?
     }
     if (bHisto[0] == max_symbol - 1) {   // only one symbol?
-      FSCWriteBits(bw, 4, 16 - 1);   // special marker for sparse case
+      FSCWriteBits(bw, 16 - 1, 4);   // special marker for sparse case
     } else {  // Compress the prefix sequence using a sub-encoder
       FSCEncoder enc2;
-      if (!EncoderInit(&enc2, bHisto, log_tab_size + 1, TAB_HDR_BITS)) {
+      if (!EncoderInit(&enc2, bHisto, log_tab_size + 1,
+                       TAB_HDR_BITS, CODING_METHOD_BUCKET)) {
         fprintf(stderr, "Sub-Encoder initialization failed!\n");
-        return 0;
+        goto Error;
       }
       const int hlen = enc2.max_symbol_;
-      FSCWriteBits(bw, 4, hlen - 1);
+      FSCWriteBits(bw, hlen - 1, 4);
       if (WriteSequence(bHisto, hlen, 2, TAB_HDR_BITS, bw) < 0) {
-        return 0;
+        goto Error;
       }
-      PutBlock(&enc2, bins, max_symbol - 1, bw);
+      enc2.methods_.put_block(&enc2, bins, max_symbol - 1, bw);
       // Write the suffix sequence
       for (i = 0; i < max_symbol - 1; ++i) {
-        FSCWriteBits(bw, bins[i], bits[i]);
+        FSCWriteBits(bw, bits[i], bins[i]);
       }
     }
+    ok = 1;
+ Error:
+    free(bHisto);
+    if (!ok) return 0;
   }
   return !bw->error_;
+}
+
+static int WriteParams(FSCEncoder* const enc, const uint32_t counts[MAX_SYMBOLS],
+                        FSCBitWriter* const bw) {
+  FSCWriteBits(bw, LOG_TAB_SIZE - enc->log_tab_size_, 4);
+  return WriteHeader(enc, counts, bw);
+}
+
+static int WriteParamsW(FSCEncoder* const enc, const uint32_t counts[MAX_SYMBOLS],
+                        FSCBitWriter* const bw) {
+  return WriteHeader(enc, counts, bw);
 }
 
 // -----------------------------------------------------------------------------
@@ -309,34 +575,53 @@ static void SimulateCoding(const FSCEncoder* enc, const uint32_t counts[],
 // -----------------------------------------------------------------------------
 // Entry point
 
+static const EncMethods kEncMethods[CODING_METHOD_LAST] = {
+  { WriteParams, PutBlock, BuildTables, BuildSpreadTableBucket },
+  { WriteParams, PutBlock, BuildTables, BuildSpreadTableReverse },
+  { WriteParams, PutBlock, BuildTables, BuildSpreadTableModulo },
+  { WriteParams, PutBlock, BuildTables, BuildSpreadTablePack },
+
+  { WriteParamsW, PutBlockW1, BuildTablesW, NULL },
+  { WriteParamsW, PutBlockW2, BuildTablesW, NULL },
+  { WriteParamsW, PutBlockAliasW1, BuildTablesAliasW, NULL },
+  { WriteParamsW, PutBlockAliasW2, BuildTablesAliasW, NULL },
+};
+
 static int Encode(const uint8_t* in, size_t size,
                   uint32_t counts[MAX_SYMBOLS],
-                  uint8_t** out, size_t* out_size, int log_tab_size) {
+                  uint8_t** out, size_t* out_size, int log_tab_size,
+                  FSCCodingMethod method) {
   int ok = 0;
   FSCEncoder enc;
   FSCBitWriter bw;
 
   if (!FSCBitWriterInit(&bw, size >> 8)) return 0;
 
-  if (!EncoderInit(&enc, counts, 0, log_tab_size)) goto end;
-  FSCWriteBits(&bw, 4, LOG_TAB_SIZE - log_tab_size);
+  if (!EncoderInit(&enc, counts, 0, log_tab_size, method)) {
+    fprintf(stderr, "Error during EncoderInit() call\n");
+    goto end;
+  }
   size_t val = size;
   while (val) {
     FSCWriteBits(&bw, 1, 1);
-    FSCWriteBits(&bw, 8, val & 0xff);
+    FSCWriteBits(&bw, val & 0xff, 8);
     val >>= 8;
   }
-  FSCWriteBits(&bw, 1, 0);
+  FSCWriteBits(&bw, 0, 1);
 
-  if (!WriteHeader(&enc, counts, &bw)) goto end;
-
+  FSCWriteBits(&bw, enc.method_, 3);
+  if (!enc.methods_.write_params(&enc, counts, &bw)) {
+    fprintf(stderr, "Error during WriteParams() call\n");
+    goto end;
+  }
 #ifdef SHOW_SIMULATION
   SimulateCoding(&enc, counts, in, size, 1 << log_tab_size);
 #endif
 
+  FSCPutBlockFunc put_block = enc.methods_.put_block;
   while (size > 0) {
     const int next = (size > BLOCK_SIZE) ? BLOCK_SIZE : size;
-    PutBlock(&enc, in, next, &bw);
+    put_block(&enc, in, next, &bw);
     in += next;
     size -= next;
   }
@@ -354,10 +639,11 @@ static int Encode(const uint8_t* in, size_t size,
 }
 
 int FSCEncode(const uint8_t* in, size_t in_size,
-              uint8_t** out, size_t* out_size, int log_tab_size) {
+              uint8_t** out, size_t* out_size, int log_tab_size,
+              FSCCodingMethod method) {
   uint32_t counts[MAX_SYMBOLS];
   FSCCountSymbols(in, in_size, counts);
-  return Encode(in, in_size, counts, out, out_size, log_tab_size);
+  return Encode(in, in_size, counts, out, out_size, log_tab_size, method);
 }
 
 // -----------------------------------------------------------------------------

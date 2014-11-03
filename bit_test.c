@@ -83,6 +83,7 @@ int main(int argc, const char* argv[]) {
   int log_tab_size_8 = LOG_TAB_SIZE - 1;
   int nb_errors = 0;
   int pmin = 0, pmax = 255;
+  FSCCodingMethod method = CODING_METHOD_16B_2X;
   int skip_FSC = 0;
   int skip_FSC8 = 0;
   int c;
@@ -94,10 +95,6 @@ int main(int argc, const char* argv[]) {
       skip_FSC = 1;
     } else if (!strcmp(argv[c], "-fsc8")) {
       skip_FSC8 = 1;
-    } else if (!strcmp(argv[c], "-mod")) {
-      BuildSpreadTable_ptr = BuildSpreadTableModulo;
-    } else if (!strcmp(argv[c], "-rev")) {
-      BuildSpreadTable_ptr = BuildSpreadTableReverse;
     } else if (!strcmp(argv[c], "-l") && c + 1 < argc) {
       log_tab_size = atoi(argv[++c]);
     } else if (!strcmp(argv[c], "-p") && c + 1 < argc) {
@@ -140,7 +137,7 @@ int main(int argc, const char* argv[]) {
 
     if (!skip_FSC) {
       GetElapsed(&start, NULL);
-      nb_errors = !FSCEncode(base, N, &bits, &bits_size, log_tab_size);
+      nb_errors = !FSCEncode(base, N, &bits, &bits_size, log_tab_size, method);
       if (nb_errors) {
         printf("Encoding error!\n");
         goto end;
@@ -159,7 +156,8 @@ int main(int argc, const char* argv[]) {
 
     if (!skip_FSC8) {
       GetElapsed(&start, NULL);
-      nb_errors = !FSCEncode(base8, N8, &bits, &bits_size, log_tab_size_8);
+      nb_errors =
+          !FSCEncode(base8, N8, &bits, &bits_size,log_tab_size_8, method);
       if (nb_errors) {
         printf("FSC8 Encoding error!\n");
         goto end;

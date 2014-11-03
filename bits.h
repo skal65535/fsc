@@ -41,26 +41,21 @@ extern "C" {
 
 typedef uint64_t fsc_val_t;
 #define RBYTES 4
-typedef uint32_t fsc_wval_t;
-#define WBYTES 4
 
 #else                                            // 32 bits
 
 typedef uint32_t fsc_val_t;
 #define RBYTES 2
-typedef uint16_t fsc_wval_t;
-#define WBYTES 2
 
 #endif
 
 #define RBITS (RBYTES * 8)
-#define WBITS (WBYTES * 8)
 
 // -----------------------------------------------------------------------------
 // BitReader
 
 typedef struct {
-  fsc_val_t     bits_;        // bits accumulator
+  fsc_val_t      bits_;       // bits accumulator
   const uint8_t* buf_;        // current position
   const uint8_t* end_;        // end of read position
   int            bit_pos_;    // unread bit position
@@ -87,15 +82,20 @@ static FSC_INLINE void FSCFillBitWindow(FSCBitReader* const br) {
   if (br->bit_pos_ >= RBITS) FSCDoFillBitWindow(br);
 }
 
+const uint8_t* FSCBitAlign(FSCBitReader* const br);
+extern const uint8_t* FSCGetBytePos(FSCBitReader* const br);
+extern const uint8_t* FSCGetByteEnd(FSCBitReader* const br);
+extern void FSCSetReadBufferPos(FSCBitReader* const br, const uint8_t* buf);
+
 // -----------------------------------------------------------------------------
 // BitWriter
 
 typedef struct {
   fsc_val_t bits_;     // currently assembled bits
   int used_;           // bit position (<= RBITS)
-  fsc_wval_t* cur_;    // current write position
-  fsc_wval_t* buf_;    // start of writable buffer
-  fsc_wval_t* end_;    // non-writable pos
+  uint8_t* cur_;       // current write position
+  uint8_t* buf_;       // start of writable buffer
+  uint8_t* end_;       // non-writable pos
   int error_;          // true if malloc failed (or other error)
 } FSCBitWriter;
 
@@ -110,7 +110,7 @@ static FSC_INLINE uint8_t* FSCBitWriterFinish(FSCBitWriter* const bw) {
   return (uint8_t*)bw->buf_;
 }
 void FSCBitWriterDestroy(FSCBitWriter* const bw);
-void FSCWriteBits(FSCBitWriter* const bw, int nb, uint32_t bits);
+void FSCWriteBits(FSCBitWriter* const bw, uint32_t bits, int nb);
 
 int FSCAppend(FSCBitWriter* const bw, const uint8_t* const buf, size_t len);
 

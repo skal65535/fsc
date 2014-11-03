@@ -103,10 +103,40 @@ static void Help() {
   printf("-save <string>     : save input message to file\n");
   printf("-d                 : print distribution\n");
   printf("-f <string>        : message file name\n");
+  printf("-w                 : use word-based coding.\n");
+  printf("-w2                : use word-based coding 2x interleave.\n");
+  printf("-a                 : use word-based coding + alias.\n");
+  printf("-a2                : use word-based coding + alias + interleave.\n");
   printf("-mod               : use modulo spread function\n");
   printf("-rev               : use reverse spread function\n");
+  printf("-pack              : use pack spread function\n");
+  printf("-buck              : use bucket spread function\n");
   printf("-h                 : this help\n");
   exit(0);
+}
+
+static int FSCParseCodingMethodOpt(const char opt[],
+                                   FSCCodingMethod* const method) {
+  if (!strcmp(opt, "-buck")) {
+    *method = CODING_METHOD_BUCKET;
+  } else if (!strcmp(opt, "-rev")) {
+    *method = CODING_METHOD_REVERSE;
+  } else if (!strcmp(opt, "-mod")) {
+    *method = CODING_METHOD_MODULO;
+  } else if (!strcmp(opt, "-pack")) {
+    *method = CODING_METHOD_PACK;
+  } else if (!strcmp(opt, "-w")) {
+    *method = CODING_METHOD_16B;
+  } else if (!strcmp(opt, "-w2")) {
+    *method = CODING_METHOD_16B_2X;
+  } else if (!strcmp(opt, "-a")) {
+    *method = CODING_METHOD_16B_ALIAS;
+  } else if (!strcmp(opt, "-a2")) {
+    *method = CODING_METHOD_16B_ALIAS_2X;
+  } else {
+    return 0;
+  }
+  return 1;
 }
 
 int main(int argc, const char* argv[]) {
@@ -116,6 +146,7 @@ int main(int argc, const char* argv[]) {
   int max_symbol = MAX_SYMBOLS;
   int print_pdf = 0;
   int log_tab_size = LOG_TAB_SIZE;
+  FSCCodingMethod method = CODING_METHOD_16B_2X;
   const char* in_file = NULL;
   const char* pdf_file = NULL;
   int c;
@@ -137,10 +168,10 @@ int main(int argc, const char* argv[]) {
       if (log_tab_size > LOG_TAB_SIZE) log_tab_size = LOG_TAB_SIZE;
     } else if (!strcmp(argv[c], "-f") && c + 1 < argc) {
       in_file = argv[++c];
-    } else if (!strcmp(argv[c], "-mod")) {
-      BuildSpreadTable_ptr = BuildSpreadTableModulo;
-    } else if (!strcmp(argv[c], "-rev")) {
-      BuildSpreadTable_ptr = BuildSpreadTableReverse;
+    } else if (FSCParseCodingMethodOpt(argv[c], &method)) {
+      continue;
+    } else if (!strcmp(argv[c], "-m") && c + 1 < argc) {
+      method = (FSCCodingMethod)atoi(argv[++c]);
     } else if (!strcmp(argv[c], "-save") && c + 1 < argc) {
       pdf_file = argv[++c];
     } else if (!strcmp(argv[c], "-d")) {
@@ -210,7 +241,7 @@ int main(int argc, const char* argv[]) {
   size_t bits_size = 0;
   MyClock start, tmp;
   GetElapsed(&start, NULL);
-  int ok = FSCEncode(base, N, &bits, &bits_size, log_tab_size);
+  int ok = FSCEncode(base, N, &bits, &bits_size, log_tab_size, method);
   double elapsed = GetElapsed(&tmp, &start);
   const double MS = 1.e-6 * N; // 8.e-6 * bits_size;
   const double reduction = 1. * bits_size / N;
