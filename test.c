@@ -115,7 +115,7 @@ int main(int argc, const char* argv[]) {
   int max_symbol = MAX_SYMBOLS;
   int print_pdf = 0;
   int log_tab_size = LOG_TAB_SIZE;
-  FSCCodingMethod method = CODING_METHOD_16B_2X;
+  FSCCodingMethod method = CODING_METHOD_DEFAULT;
   const char* in_file = NULL;
   const char* pdf_file = NULL;
   int c;

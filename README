@@ -11,6 +11,14 @@ from Yann Collet, which is referenced by Jarek's paper.
 See the blog entry:
   http://fastcompression.blogspot.fr/2013/12/finite-state-entropy-new-breed-of.html
 
+Fabian Giesen also has interesting implementations ideas. See his blog for pointers:
+
+http://fgiesen.wordpress.com/
+
+Code is located here: https://github.com/rygorous/ryg_rans
+I re-implemented some his ideas (Alias method, interleaving, etc.) for
+experimentation purpose.
+
 Building:
 =========
 There is a primitive "Makefile" to help you build the library (libfsc.a)
@@ -34,11 +42,12 @@ API:
 ====
 
 // Compresses input buffer (in / in_size) using FSC.
-// log_tab_size must be in [log(alphabet_size)..14] range.
+// log_tab_size must be in [log(alphabet_size)..14] range
+// for method 0 to 3. For word-based method, the value doesn't matter.
 // Compressed output (*out / out_size) must be deallocated using free().
 int FSCEncode(const uint8_t* in, size_t in_size,
               uint8_t** out, size_t* out_size,
-              int log_tab_size);
+              int log_tab_size, FSCCodingMethod method);
 
 // Decompresses compressed bytes.
 // Decompressed output (*out / out_size) must be deallocated using free().

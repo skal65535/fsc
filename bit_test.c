@@ -69,10 +69,9 @@ void Help() {
   printf("-l <int>           : max table size bits for bit-by-bit\n");
   printf("-l8 <int>          : max table size bits for byte-by-byte\n");
   printf("-p <int>           : try only one proba value\n");
-  printf("-mod               : use modulo spread function\n");
-  printf("-rev               : use reverse spread function\n");
   printf("-fsc               : skip FSC\n");
   printf("-fsc8              : skip FSC8\n");
+  FSCPrintCodingOptions();
   printf("-h                 : this help\n");
   exit(0);
 }
@@ -83,7 +82,7 @@ int main(int argc, const char* argv[]) {
   int log_tab_size_8 = LOG_TAB_SIZE - 1;
   int nb_errors = 0;
   int pmin = 0, pmax = 255;
-  FSCCodingMethod method = CODING_METHOD_16B_2X;
+  FSCCodingMethod method = CODING_METHOD_DEFAULT;
   int skip_FSC = 0;
   int skip_FSC8 = 0;
   int c;
@@ -91,6 +90,10 @@ int main(int argc, const char* argv[]) {
   for (c = 1; c < argc; ++c) {
     if (!strcmp(argv[c], "-h")) {
       Help();
+    } else if (FSCParseCodingMethodOpt(argv[c], &method)) {
+      continue;
+    } else if (!strcmp(argv[c], "-m") && c + 1 < argc) {
+      method = (FSCCodingMethod)atoi(argv[++c]);
     } else if (!strcmp(argv[c], "-fsc")) {
       skip_FSC = 1;
     } else if (!strcmp(argv[c], "-fsc8")) {
@@ -122,7 +125,7 @@ int main(int argc, const char* argv[]) {
 
   int p;
   for (p = pmin; p <= pmax && nb_errors == 0; ++p) {
-    double P = p / 255.;
+    const double P = p / 255.;
     MyClock start, tmp;
     double S_FSC = 0., S_FSC8 = 0., S_AC = 0.;
     double t_FSC_enc = 0., t_FSC_dec = 0.;
@@ -157,7 +160,7 @@ int main(int argc, const char* argv[]) {
     if (!skip_FSC8) {
       GetElapsed(&start, NULL);
       nb_errors =
-          !FSCEncode(base8, N8, &bits, &bits_size,log_tab_size_8, method);
+          !FSCEncode(base8, N8, &bits, &bits_size, log_tab_size_8, method);
       if (nb_errors) {
         printf("FSC8 Encoding error!\n");
         goto end;
