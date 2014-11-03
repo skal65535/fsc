@@ -30,7 +30,7 @@
 // #define DEBUG_ALIAS
 
 typedef uint8_t alias_t;        // enough to encode MAX_SYMBOLS
-typedef uint16_t alias_tab_t;   // enough to store MAX_TAB_SIZE index
+typedef uint32_t alias_tab_t;   // enough to store MAX_TAB_SIZE index
 
 typedef struct {
   alias_tab_t cut_[ALIAS_MAX_SYMBOLS];
@@ -54,7 +54,7 @@ int AliasVerifyTable(const AliasTable* const t,
 
 // encoding:
 int AliasBuildEncMap(const uint32_t counts[], int max_symbol,
-                     alias_tab_t map[MAX_TAB_SIZE]);
+                     uint16_t map[MAX_TAB_SIZE]);
 
 // Spread function for alias look-up.
 int AliasSpreadMap(int max_symbol, const uint32_t counts[],

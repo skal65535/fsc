@@ -102,7 +102,7 @@ int AliasSpreadMap(int max_symbol, const uint32_t counts[],
 }
 
 int AliasBuildEncMap(const uint32_t counts[], int max_symbol,
-                     alias_tab_t map[MAX_TAB_SIZE]) {
+                     uint16_t map[MAX_TAB_SIZE]) {
   AliasTable t;
   uint32_t r;
   uint32_t starts[MAX_SYMBOLS];
