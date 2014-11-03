@@ -50,7 +50,7 @@ static void Help() {
 int main(int argc, const char* argv[]) {
   int log_tab_size = 12;
   int compress = 1;
-  FSCCodingMethod method = CODING_METHOD_16B_2X;
+  FSCCodingMethod method = CODING_METHOD_DEFAULT;
   int stats_only = 0;
   int ok = 0;
   int c;
