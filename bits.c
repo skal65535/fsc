@@ -63,7 +63,10 @@ void FSCInitBitReader(FSCBitReader* const br,
 }
 
 void FSCSetReadBufferPos(FSCBitReader* const br, const uint8_t* buf) {
-  FSCInitBitReader(br, buf, br->end_ - buf);
+  br->buf_ = buf;
+  br->bits_ = 0;
+  br->bit_pos_ = sizeof(br->bits_) * 8;
+  br->eof_ = (buf > br->end_);
 }
 
 const uint8_t* FSCGetBytePos(FSCBitReader* const br) {
