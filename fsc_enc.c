@@ -73,6 +73,7 @@ struct FSCEncoder {
   int method_;
   EncMethods methods_;
   int max_symbol_;
+  int unique_symbol_;
   uint16_t states_[TAB_SIZE];
   transf_t transforms_[MAX_SYMBOLS];
   size_t in_size_;
@@ -191,6 +192,23 @@ static int BuildTablesAliasW(FSCEncoder* const enc, const uint32_t counts[]) {
          AliasBuildEncMap(counts, enc->max_symbol_, enc->alias_map_);
 }
 
+static int IsUniqueSymbol(int max_symbol, const uint32_t counts[]) {
+  int i;
+  int unique = max_symbol;
+  for (i = 0; i < max_symbol; ++i) {
+    if (counts[i]) {
+      if (unique == max_symbol) {
+        unique = i;
+      } else {
+        unique = -1;   // more than one symbol
+        break;
+      }
+    }
+  }
+  assert(unique < max_symbol);
+  return unique;
+}
+
 static int EncoderInit(FSCEncoder* const enc, uint32_t counts[],
                        int max_symbol, int log_tab_size,
                        FSCCodingMethod method) {
@@ -199,8 +217,6 @@ static int EncoderInit(FSCEncoder* const enc, uint32_t counts[],
   if (max_symbol == 0) max_symbol = MAX_SYMBOLS;
   if (log_tab_size < 1) return 0;
   if (method >= CODING_METHOD_LAST) return 0;
-  enc->method_ = method;
-  enc->methods_ = kEncMethods[method];
 
   if (method >= CODING_METHOD_16B) {
     log_tab_size = MAX_LOG_TAB_SIZE;
@@ -214,7 +230,16 @@ static int EncoderInit(FSCEncoder* const enc, uint32_t counts[],
     fprintf(stderr, "!! enc->max_symbol_: %d\n", enc->max_symbol_);
     return 0;
   }
+
+  enc->unique_symbol_ = IsUniqueSymbol(max_symbol, counts);
+  assert(enc->unique_symbol_ < max_symbol);
+  if (enc->unique_symbol_ >= 0) {
+    method = CODING_METHOD_UNIQUE;
+  }
   if (enc->max_symbol_ > (1 << log_tab_size)) return 0;
+
+  enc->method_ = method;
+  enc->methods_ = kEncMethods[method];
   return enc->methods_.build_tables(enc, counts);
 }
 
@@ -457,9 +482,11 @@ static int DoPutBlockAliasW2(const FSCEncoder* enc, const uint8_t* in, int size,
 static void FUNC_NAME(const FSCEncoder* enc, const uint8_t* in, int size,   \
                       FSCBitWriter* const bw) {                             \
   FSCType output[BLOCK_SIZE];                                               \
+  assert(size <= BLOCK_SIZE);                                               \
   const int pos = CALL(enc, in, size, output);                              \
+  assert(pos >= 0);                                                         \
   FSCAppend(bw, (const uint8_t*)&output[pos],                               \
-                      (BLOCK_SIZE - pos) * sizeof(output[0]));              \
+            (BLOCK_SIZE - pos) * sizeof(output[0]));                        \
 }
 
 PUT_BLOCK_WRAPPER(PutBlockW1, DoPutBlockW1)
@@ -523,6 +550,9 @@ static int WriteHeader(FSCEncoder* const enc, const uint32_t counts[MAX_SYMBOLS]
   const int max_symbol = enc->max_symbol_;
   const int log_tab_size = enc->log_tab_size_;
   uint32_t tab_size = 1u << log_tab_size;
+
+  assert(enc->unique_symbol_ < 0);
+  assert(max_symbol > 1);
   FSCWriteBits(bw, max_symbol - 1, 8);
 
   if (max_symbol < HDR_SYMBOL_LIMIT) {  // Method #1 for small alphabet
@@ -531,11 +561,11 @@ static int WriteHeader(FSCEncoder* const enc, const uint32_t counts[MAX_SYMBOLS]
     }
   } else {  // Method #2 for large alphabet
     int ok = 0;
+    int i;
     uint8_t bins[MAX_SYMBOLS];
     uint32_t* const bHisto =
         (uint32_t*)calloc(sizeof(*bHisto), log_tab_size + 1);
     uint16_t bits[MAX_SYMBOLS];
-    int i;
     if (bHisto == NULL) return 0;
     // Decompose into prefix and suffix
     {
@@ -565,6 +595,7 @@ static int WriteHeader(FSCEncoder* const enc, const uint32_t counts[MAX_SYMBOLS]
       const int hlen = enc2.max_symbol_;
       FSCWriteBits(bw, hlen - 1, 5);
       if (WriteSequence(bHisto, hlen, 2, TAB_HDR_BITS, bw) < 0) {
+        fprintf(stderr, "Error during WriteSequence()!\n");
         goto Error;
       }
       enc2.methods_.put_block(&enc2, bins, max_symbol - 1, bw);
@@ -578,6 +609,7 @@ static int WriteHeader(FSCEncoder* const enc, const uint32_t counts[MAX_SYMBOLS]
     free(bHisto);
     if (!ok) return 0;
   }
+ End:
   return !bw->error_;
 }
 
@@ -590,6 +622,30 @@ static int WriteParams(FSCEncoder* const enc, const uint32_t counts[MAX_SYMBOLS]
 static int WriteParamsW(FSCEncoder* const enc, const uint32_t counts[MAX_SYMBOLS],
                         FSCBitWriter* const bw) {
   return WriteHeader(enc, counts, bw);
+}
+
+// -----------------------------------------------------------------------------
+
+static int WriteParamsUnique(FSCEncoder* const enc, const uint32_t counts[MAX_SYMBOLS],
+                             FSCBitWriter* const bw) {
+  (void)counts;
+  assert(enc->unique_symbol_ >= 0 && enc->unique_symbol_ < enc->max_symbol_);
+  FSCWriteBits(bw, enc->unique_symbol_, 8);
+  return !bw->error_;
+}
+
+static int BuildTablesUnique(FSCEncoder* const enc, const uint32_t counts[]) {
+  (void)enc;
+  (void)counts;
+  return 1;
+}
+
+static void PutBlockUnique(const FSCEncoder* enc, const uint8_t* in, int size,
+                           FSCBitWriter* const bw) {
+  (void)enc;
+  (void)in;
+  (void)size;
+  (void)bw;
 }
 
 // -----------------------------------------------------------------------------
@@ -656,6 +712,8 @@ static const EncMethods kEncMethods[CODING_METHOD_LAST] = {
   { WriteParamsW, PutBlockAliasW1, BuildTablesAliasW, NULL },
   { WriteParamsW, PutBlockAliasW2, BuildTablesAliasW, NULL },
   { WriteParamsW, PutBlockW4, BuildTablesW, NULL },
+
+  { WriteParamsUnique, PutBlockUnique, BuildTablesUnique, NULL },
 };
 
 static int Encode(const uint8_t* in, size_t size,

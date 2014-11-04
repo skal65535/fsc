@@ -73,6 +73,7 @@ struct FSCDecoder {
   FSC_STATUS status_;
   int log_tab_size_;
   int max_symbol_;
+  int unique_symbol_;
   uint32_t out_size_;
 
   FSCState tab_[TAB_SIZE];   // ~16k for LOG_TAB_SIZE=12
@@ -385,6 +386,8 @@ static int ReadHeader(FSCDecoder* dec, FSCBitReader* br, uint32_t counts[TAB_SIZ
   const uint32_t tab_size = 1 << log_tab_size;
   const int max_symbol = 1 + FSCReadBits(br, 8);
   dec->max_symbol_ = max_symbol;
+  dec->unique_symbol_ = -1;
+
   if (max_symbol < HDR_SYMBOL_LIMIT) {  // Use method #1 for small alphabet
     if (!ReadSequence(counts, max_symbol, 2, log_tab_size, br)) {
       return 0;
@@ -409,7 +412,7 @@ static int ReadHeader(FSCDecoder* dec, FSCBitReader* br, uint32_t counts[TAB_SIZ
         dec2.method_ = CODING_METHOD_BUCKET;
         dec2.methods_ = kDecMethods[dec2.method_];
         if (hlen > log_tab_size) return 0;
-        if (!BuildStateTable(&dec2, bHisto)) {
+        if (!dec2.methods_.build_tables(&dec2, bHisto)) {
           fprintf(stderr, "Sub-Decoder initialization failed!\n");
           return 0;
         }
@@ -445,6 +448,32 @@ static int ReadParamsW(FSCDecoder* dec, FSCBitReader* br,
   return ReadHeader(dec, br, counts);
 }
 
+//------------------------------------------------------------------------------
+// corner case of only-one-symbol
+
+static int GetBlockUnique(FSCDecoder* dec, uint8_t* out, int size,
+                          FSCBitReader* br) {
+  memset(out, dec->unique_symbol_, size);
+  return 1;
+}
+
+static int ReadParamsUnique(FSCDecoder* dec, FSCBitReader* br,
+                            uint32_t counts[MAX_SYMBOLS]) {
+  memset(counts, 0, sizeof(counts));
+  dec->unique_symbol_ = FSCReadBits(br, 8);
+  dec->max_symbol_ = dec->unique_symbol_ + 1;
+  dec->log_tab_size_ = MAX_LOG_TAB_SIZE;
+  return !br->eof_;
+}
+
+static int BuildTableUnique(FSCDecoder* dec, const uint32_t counts[]) {
+  (void)dec;
+  (void)counts;
+  return 1;
+}
+
+//------------------------------------------------------------------------------
+
 static const DecMethods kDecMethods[CODING_METHOD_LAST] = {
   { ReadParams, GetBlock, BuildStateTable, BuildSpreadTableBucket },
   { ReadParams, GetBlock, BuildStateTable, BuildSpreadTableReverse },
@@ -457,6 +486,8 @@ static const DecMethods kDecMethods[CODING_METHOD_LAST] = {
   { ReadParamsW, GetBlockAliasW2, BuildStateTableAliasW, NULL },
 
   { ReadParamsW, GetBlockW4, BuildStateTableW, NULL },
+
+  { ReadParamsUnique, GetBlockUnique, BuildTableUnique, NULL },
 };
 
 //------------------------------------------------------------------------------
@@ -466,6 +497,7 @@ FSCDecoder* FSCInit(const uint8_t* input, size_t len) {
   if (dec == NULL) return NULL;
 
   FSCInitBitReader(&dec->br_, input, len);
+  dec->unique_symbol_ = -1;
   dec->out_size_ = 0;
   int i;
   for (i = 0; i < 8 && FSCReadBits(&dec->br_, 1); ++i) {
