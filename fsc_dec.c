@@ -277,9 +277,7 @@ static int GetBlockW4(FSCDecoder* dec, uint8_t* out, int size,
   lbr.eof_ = (buf == buf_end);
   if (lbr.eof_) goto End;
   int r;
-  for (r = 0; r < 4; ++r) {
-    states[r] = (size > r) ? *buf++ : 0;
-  }
+  for (r = 0; r < 4; ++r) states[r] = *buf++;
 
   int n;
   for (n = 0; n < (size & ~3); n += 4) {
@@ -392,10 +390,10 @@ static int ReadHeader(FSCDecoder* dec, FSCBitReader* br, uint32_t counts[TAB_SIZ
       return 0;
     }
   } else {  // Use more complex method #2 for large alphabet
-    const int hlen = 1 + FSCReadBits(br, 4);
+    const int hlen = 1 + FSCReadBits(br, 5);
     uint32_t bHisto[LOG_TAB_SIZE + 1];
     uint8_t bins[MAX_SYMBOLS] = { 0 };
-    if (hlen == 16) {   // sparse case
+    if (hlen == 32) {   // sparse case
       int i;
       for (i = 0; i < max_symbol - 1; ++i) counts[i] = 0;
       counts[max_symbol - 1] = tab_size;

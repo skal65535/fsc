@@ -19,7 +19,7 @@
 
 #include "./fsc_utils.h"
 
-static void Generate(uint8_t* in, size_t size, int p, uint8_t* in8,
+static void Generate(uint8_t* in, size_t size, int p, uint8_t* in8, int N8,
                      FSCRandom* rg) {
   uint8_t syms[255];
   int i, k;
@@ -34,7 +34,6 @@ static void Generate(uint8_t* in, size_t size, int p, uint8_t* in8,
     in[i] = syms[k];
   }
   // Pack 8 bits together
-  const int N8 = (size + 7) >> 3;
   memset(in8, 0, N8 * sizeof(*in8));
   for (k = 0; k < 8; ++k) {
     for (i = k; i < size; i += 8) {
@@ -56,6 +55,11 @@ static int CheckErrors(size_t N, const uint8_t* out, const uint8_t* base,
     printf("%s Decoding errors! (%d)\n", name, nb_errors);
     for (i = 0; i < (N > 40 ? 40 : N); ++i) {
       printf("[%d/%d]%c", out[i], base[i], " *"[out[i] != base[i]]);
+    }
+    printf("\n");
+    for (i = 0; i < N; ++i) {
+      printf("%c", ".*"[out[i] != base[i]]);
+      if ((i & 31) == 31) printf("\n");
     }
     printf("\n");
   }
@@ -132,7 +136,7 @@ int main(int argc, const char* argv[]) {
     double t_FSC8_enc = 0., t_FSC8_dec = 0.;
     int i;
 
-    Generate(base, N, p, base8, &r);
+    Generate(base, N, p, base8, N8, &r);
     const double S0 = xlogx(P) + xlogx(1. - P);
     const double S1 = GetEntropy(base, N);
     uint8_t* bits = NULL;

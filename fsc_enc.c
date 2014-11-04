@@ -554,7 +554,7 @@ static int WriteHeader(FSCEncoder* const enc, const uint32_t counts[MAX_SYMBOLS]
       if (total != 0) goto Error;   // Unnormalized distribution!?
     }
     if (bHisto[0] == max_symbol - 1) {   // only one symbol?
-      FSCWriteBits(bw, 16 - 1, 4);   // special marker for sparse case
+      FSCWriteBits(bw, 32 - 1, 5);   // special marker for sparse case
     } else {  // Compress the prefix sequence using a sub-encoder
       FSCEncoder enc2;
       if (!EncoderInit(&enc2, bHisto, log_tab_size + 1,
@@ -563,7 +563,7 @@ static int WriteHeader(FSCEncoder* const enc, const uint32_t counts[MAX_SYMBOLS]
         goto Error;
       }
       const int hlen = enc2.max_symbol_;
-      FSCWriteBits(bw, hlen - 1, 4);
+      FSCWriteBits(bw, hlen - 1, 5);
       if (WriteSequence(bHisto, hlen, 2, TAB_HDR_BITS, bw) < 0) {
         goto Error;
       }
