@@ -459,7 +459,7 @@ static int GetBlockUnique(FSCDecoder* dec, uint8_t* out, int size,
 
 static int ReadParamsUnique(FSCDecoder* dec, FSCBitReader* br,
                             uint32_t counts[MAX_SYMBOLS]) {
-  memset(counts, 0, sizeof(counts));
+  memset(counts, 0, MAX_SYMBOLS * sizeof(counts[0]));
   dec->unique_symbol_ = FSCReadBits(br, 8);
   dec->max_symbol_ = dec->unique_symbol_ + 1;
   dec->log_tab_size_ = MAX_LOG_TAB_SIZE;
