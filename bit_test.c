@@ -131,7 +131,7 @@ int main(int argc, const char* argv[]) {
   for (p = pmin; p <= pmax && nb_errors == 0; ++p) {
     const double P = p / 255.;
     MyClock start, tmp;
-    double S_FSC = 0., S_FSC8 = 0., S_AC = 0.;
+    double S_FSC = 0., S_FSC8 = 0.;
     double t_FSC_enc = 0., t_FSC_dec = 0.;
     double t_FSC8_enc = 0., t_FSC8_dec = 0.;
     int i;
