@@ -225,6 +225,7 @@ static int GetBlockW1(FSCDecoder* dec, uint8_t* out, int size,
 
   lbr.eof_ = (buf == buf_end);
   if (lbr.eof_) goto End;
+  const FSCType* buf0 = buf;
   FSCStateW state = *buf++;
 
   int n;
@@ -233,6 +234,7 @@ static int GetBlockW1(FSCDecoder* dec, uint8_t* out, int size,
     if (lbr.eof_) break;
     out[n] = NextSymbol(dec, &state);
   }
+  RENORMALIZE_STATE(state);
   FSCSetReadBufferPos(&lbr, (const uint8_t*)buf);
  End:
   *br = lbr;
@@ -258,9 +260,11 @@ static int GetBlockW2(FSCDecoder* dec, uint8_t* out, int size,
     out[n + 0] = NextSymbol(dec, &state0);
     out[n + 1] = NextSymbol(dec, &state1);
   }
+  RENORMALIZE_STATE(state0);
+  RENORMALIZE_STATE(state1);
   if (size & 1) {
-    RENORMALIZE_STATE(state0);
     if (!lbr.eof_) out[n] = NextSymbol(dec, &state0);
+    RENORMALIZE_STATE(state0);
   }
   FSCSetReadBufferPos(&lbr, (const uint8_t*)buf);
  End:
@@ -292,9 +296,14 @@ static int GetBlockW4(FSCDecoder* dec, uint8_t* out, int size,
     out[n + 2] = NextSymbol(dec, &states[2]);
     out[n + 3] = NextSymbol(dec, &states[3]);
   }
+  RENORMALIZE_STATE(states[0]);
+  RENORMALIZE_STATE(states[1]);
+  RENORMALIZE_STATE(states[2]);
+  RENORMALIZE_STATE(states[3]);
   for (; n < size; ++n) {
     RENORMALIZE_STATE(states[n & 3]);
     if (!lbr.eof_) out[n] = NextSymbol(dec, &states[n & 3]);
+    RENORMALIZE_STATE(states[n & 3]);
   }
   FSCSetReadBufferPos(&lbr, (const uint8_t*)buf);
  End:
@@ -318,6 +327,7 @@ static int GetBlockAliasW1(FSCDecoder* dec, uint8_t* out, int size,
     if (lbr.eof_) break;
     out[n] = NextSymbolAlias(dec, &state);
   }
+  RENORMALIZE_STATE(state);
   FSCSetReadBufferPos(&lbr, (const uint8_t*)buf);
  End:
   *br = lbr;
@@ -343,6 +353,8 @@ static int GetBlockAliasW2(FSCDecoder* dec, uint8_t* out, int size,
     out[n + 0] = NextSymbolAlias(dec, &state0);
     out[n + 1] = NextSymbolAlias(dec, &state1);
   }
+  RENORMALIZE_STATE(state0);
+  RENORMALIZE_STATE(state1);
   if (size & 1) {
     RENORMALIZE_STATE(state0);
     if (!lbr.eof_) out[n] = NextSymbolAlias(dec, &state0);

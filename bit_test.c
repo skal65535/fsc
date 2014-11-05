@@ -114,7 +114,7 @@ int main(int argc, const char* argv[]) {
     }
   }
   const int N8 = (N + 7) >> 3;
-  const double MS = 1.e-6 * N;
+  const double MS = 1.e-6 * N / 8.;
 
   uint8_t* const base = (uint8_t*)malloc((N8 + N) * sizeof(*base));
   if (base == NULL) return 0;
