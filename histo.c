@@ -20,6 +20,7 @@
 #include "./fsc.h"
 
 #include <stdio.h>
+#include <math.h>
 #include <assert.h>
 
 //------------------------------------------------------------------------------
@@ -33,13 +34,7 @@ void FSCCountSymbols(const uint8_t* in, size_t in_size,
 
 //------------------------------------------------------------------------------
 
-#define FIX_BITS 30   // fixed-point precision for correction
-#define FIX_ONE (1U << FIX_BITS)
-#define DESCALE_BITS (FIX_BITS - log_tab_size)
-#define DESCALE_ONE  (1U << DESCALE_BITS)
-#define DESCALE_MASK (DESCALE_ONE - 1)
-
-// Analyze counts[] and renormalize with error-diffusion so that
+// Analyze counts[] and renormalize with Squeaky Wheel fix, so that
 // the total is rescaled to be equal to tab_size exactly.
 int FSCNormalizeCounts(uint32_t counts[MAX_SYMBOLS], int max_symbol,
                        int log_tab_size) {
@@ -61,49 +56,32 @@ int FSCNormalizeCounts(uint32_t counts[MAX_SYMBOLS], int max_symbol,
   if (nb_symbols > tab_size) return 0;
   max_symbol = last_nz;
 
-  if (total >= tab_size) {
-    if (nb_symbols == tab_size) {
-      // corner case of mandatory uniform distribution
-      for (n = 0; n < max_symbol; ++n) counts[n] = 1;
-      total = nb_symbols;
-    } else {
-      // Need to prevent some small counts from going to zero
-      uint64_t correction = total;
-      uint64_t total_correction = 0;
-      while (correction != 0) {
-        total_correction += correction;
-        correction = (correction * nb_symbols) >> log_tab_size;
-      }
-      total_correction >>= log_tab_size;
-      for (n = 0; n < max_symbol; ++n) {
-        if (counts[n]) counts[n] += total_correction;
-      }
-      total += total_correction * nb_symbols;
+  float target[MAX_SYMBOLS];
+  int miss = tab_size;
+  const float norm = 1.f * tab_size / total;
+  for (n = 0; n < max_symbol; ++n) {
+    target[n] = norm * counts[n];
+    if (counts[n] > 0) {
+      counts[n] = (uint32_t)(target[n] + .5);
+      if (counts[n] == 0) counts[n] = 1;
+      miss -= counts[n];
     }
   }
-  {
-    uint32_t sum = 0;
-    const int32_t mult = FIX_ONE / total;   // multiplier
-    const int32_t error = FIX_ONE % total;
-    int32_t cumul = (error < DESCALE_ONE) ? (DESCALE_ONE + error) >> 1
-                                           : error;
+  const int incr = (miss > 0) ? 1 : -1;
+  if (miss < 0) miss = -miss;
+  while (miss-- > 0) {
+    int worst = -1;
+    float worst_diff = 0;
     for (n = 0; n < max_symbol; ++n) {
-      if (counts[n] > 0) {
-        int64_t c = (int64_t)counts[n] * mult + cumul;
-        counts[n] = c >> DESCALE_BITS;
-        cumul = c & DESCALE_MASK;
-        if (counts[n] <= 0) {
-//          printf("Normalization problem. log_tab_size may be too small.\n");
-          counts[n] = 1;
-          cumul -= DESCALE_ONE;
+      if (counts[n] > (incr < 0 ? 1 : 0)) {
+        const float diff = fabs(target[n] - counts[n]);
+        if (worst_diff < diff) {
+          worst_diff = diff;
+          worst = n;
         }
-        sum += counts[n];
       }
     }
-    if (sum != tab_size) {
-      printf("Normalization error!! %d / %d\n", sum, tab_size);
-      return 0;
-    }
+    counts[worst] += incr;
   }
   return max_symbol;
 }
