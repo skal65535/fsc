@@ -18,38 +18,58 @@
 
 #include "./fsc_utils.h"
 
-#define PROBA_BITS 32
+#define PROBA_BITS 31
 #define BITS 32
+typedef uint64_t ANSProba;
 typedef uint32_t ANSBaseW;   // I/O words
 typedef uint64_t ANSStateW;  // internal state
 
-#define PROBA_MAX (1ull << PROBA_BITS)
+#define PROBA_MAX ((ANSProba)1 << PROBA_BITS)
 #define PROBA_MASK (PROBA_MAX - 1)
 #define BITS_LIMIT ((ANSStateW)1 << BITS)
 #define BITS_MASK (BITS_LIMIT - 1)
 
 static size_t bANSEncode(const uint8_t* in, size_t in_size,
                          uint8_t* const buf_start, uint8_t* const buf_end,
-                         uint64_t p0) {
+                         ANSProba p0) {
   ANSStateW x = BITS_LIMIT;
-  const uint64_t q0 = PROBA_MAX - p0;
+  const ANSProba q0 = PROBA_MAX - p0;
   const ANSStateW threshold0 = BITS_LIMIT * p0;
   const ANSStateW threshold1 = BITS_LIMIT * q0;
+#if (PROBA_BITS <= 16)
+#define FIX 63
+  const uint64_t inv_p0 = p0 ? ((1ull << FIX) + p0 - 1) / p0 : 0;
+  const uint64_t inv_q0 = q0 ? ((1ull << FIX) + q0 - 1) / q0 : 0;
+#endif
   ANSBaseW* buf = (ANSBaseW*)buf_end;
   int i;
+  assert(sizeof(ANSBaseW) * 8 == BITS);
   for (i = in_size - 1; i >= 0; --i) {   // encode in reverse
     if (x >= (in[i] ? threshold1 : threshold0)) {
       if (buf <= (ANSBaseW*)buf_start) return 0;  // error
       *--buf = x & BITS_MASK;
       x >>= BITS;
     }
+#if defined(FIX)
+// x is decomposed as: x = k.p0 + r
+// x' = k.L + r , where k = x/p0 = (x * inv_p0) >> FIX
+// x' = k.L + x - k.p0 = k.(L-p0) + x = k.q0 + x
+    if (in[i]) {
+      const ANSStateW q = ((__int128)x * inv_q0) >> FIX;
+      x += q * p0 + p0;
+    } else {
+      const ANSStateW q = ((__int128)x * inv_p0) >> FIX;
+      x += q * q0 + 0;
+    }
+#else
     if (in[i]) {
       x = ((x / q0) << PROBA_BITS) + (x % q0) + p0;
-// slower:      x += (x / q0 + 1) * p0;
+// slower:      x += (x / q0) * p0 + p0;
     } else {
       x = ((x / p0) << PROBA_BITS) + (x % p0);
 // slower:      x += (x / p0) * q0;
     }
+#endif
   }
   if (buf - 2 < (ANSBaseW*)buf_start) {
     printf("BUFFER ERROR!\n");
@@ -61,23 +81,23 @@ static size_t bANSEncode(const uint8_t* in, size_t in_size,
 }
 
 static int bANSDecode(const ANSBaseW* ptr,
-                      uint8_t* out, size_t in_size, uint64_t p0) {
+                      uint8_t* out, size_t in_size, ANSProba p0) {
 
   ANSStateW x = ((ANSStateW)ptr[0] << BITS) | (ANSStateW)ptr[1];
   ptr += 2;
-  const uint64_t q0 = PROBA_MAX - p0;
+  const ANSProba q0 = PROBA_MAX - p0;
   int i;
   for (i = 0; i < in_size; ++i) {
     if (x < PROBA_MAX) {
       x = (x << BITS) | *ptr++;   // decode forward
     }
-    const uint32_t xfrac = x & PROBA_MASK;
+    const ANSProba xfrac = x & PROBA_MASK;
     out[i] = (xfrac >= p0);
-    if (out[i]) {
-      x = q0 * (x >> PROBA_BITS) + xfrac - p0;
+    if (xfrac < p0) {
+       x = p0 * (x >> PROBA_BITS) + xfrac;
     } else {
-      x = p0 * (x >> PROBA_BITS) + xfrac;
-    }
+      x = q0 * (x >> PROBA_BITS) + xfrac - p0;
+   }
   }
   assert(x == BITS_LIMIT);
   return 1;
@@ -87,9 +107,9 @@ static int bANSDecode(const ANSBaseW* ptr,
 
 static size_t bArithEncode(const uint8_t* in, size_t in_size,
                            uint8_t* const buf_start, uint8_t* const buf_end,
-                           uint64_t p0) {
+                           ANSProba p0) {
   ANSStateW low = 0;
-  ANSStateW hi = ~0ull;
+  ANSStateW hi = ~0;
   ANSBaseW* buf = (ANSBaseW*)buf_start;
   int i;
   for (i = 0; i < in_size; ++i) {
@@ -121,10 +141,10 @@ static size_t bArithEncode(const uint8_t* in, size_t in_size,
 }
 
 static int bArithDecode(const ANSBaseW* ptr,
-                        uint8_t* out, size_t in_size, uint64_t p0) {
+                        uint8_t* out, size_t in_size, ANSProba p0) {
 
   ANSStateW low = 0;
-  ANSStateW hi = ~0ull;
+  ANSStateW hi = ~0;
   ANSStateW x = *ptr++;
   x = (x << BITS) | *ptr++;
   
@@ -170,10 +190,10 @@ static int CheckErrors(size_t N, const uint8_t out[], const uint8_t base[],
   return nb_errors;
 }
 
-static void Generate(uint8_t* in, size_t size, uint64_t p0, FSCRandom* rg) {
+static void Generate(uint8_t* in, size_t size, ANSProba p0, FSCRandom* rg) {
   int i;
   for (i = 0; i < size; ++i) {
-    uint64_t k = 0;
+    ANSProba k = 0;
     int b = 0;
     while (b < PROBA_BITS) {
       int B = PROBA_BITS - b;
@@ -194,7 +214,7 @@ void Help() {
 }
 
 int main(int argc, const char* argv[]) {
-  int N = 10000;
+  int N = 100000;
   int L = 16;
   int nb_errors = 0;
   int pmin = 1, pmax = 255;
@@ -229,7 +249,7 @@ int main(int argc, const char* argv[]) {
 
   int p;
   for (p = pmin; (p <= pmax) && (nb_errors == 0); ++p) {
-    const uint64_t p0 =  (p * PROBA_MAX) / 256;
+    const ANSProba p0 =  (ANSProba)(p / 256. * PROBA_MAX);
     MyClock start, tmp;
     double S_ANS = 0., S_AC = 0.;
     double t_ANS_enc = 0., t_ANS_dec = 0.;
