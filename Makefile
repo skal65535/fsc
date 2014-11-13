@@ -2,7 +2,7 @@
 # Simple makefile for gcc compiler
 # 
 
-EXES = fsc test bit_test
+EXES = fsc test bit_test bit_cmp
 all: libfsc.a $(EXES)
 
 CC = gcc
@@ -28,7 +28,10 @@ fsc: fsc.o libfsc.a libfscutils.a
 	gcc -o fsc fsc.o ./libfsc.a ./libfscutils.a $(LDFLAGS) $(CFLAGS)
 
 bit_test: bit_test.o libfsc.a libfscutils.a
-	gcc -o bit_test bit_test.o ./libfsc.a ./libfscutils.a $(LDFLAGS) $(CFLAGS)
+	gcc -o bit_test bit_test.o ./libfscutils.a ./libfsc.a $(LDFLAGS) $(CFLAGS)
+
+bit_cmp: bit_cmp.o libfsc.a libfscutils.a
+	gcc -o bit_cmp bit_cmp.o ./libfscutils.a ./libfsc.a $(LDFLAGS) $(CFLAGS)
 
 pak: clean
 	tar czf fsc_oss.tgz *.c *.h Makefile AUTHORS CONTRIBUTORS LICENSE README

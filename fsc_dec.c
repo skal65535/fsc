@@ -541,12 +541,17 @@ void FSCDelete(FSCDecoder* dec) {
 
 int FSCDecompress(FSCDecoder* dec, uint8_t** out, size_t* out_size) {
   if (dec == NULL || out == NULL || out_size == NULL) return 0;
-  *out = (uint8_t*)malloc(dec->out_size_ * sizeof(*out));
-  if (*out == NULL) return 0;
-  *out_size = dec->out_size_;
   size_t size = dec->out_size_;
-  uint8_t* ptr = *out;
+  int need_allocate = (*out == NULL);
+  if (need_allocate) {
+    *out = (uint8_t*)malloc(size * sizeof(*out));
+    if (*out == NULL) return 0;
+    *out_size = size;
+  } else {
+    if (*out_size < size) return 0;  // not enough room
+  }
 
+  uint8_t* ptr = *out;
   FSCGetBlockFunc get_block = dec->methods_.get_block;
   while (size > 0 && dec->status_ == FSC_OK) {
     const int next_size = (size > BLOCK_SIZE) ? BLOCK_SIZE : (int)size;
@@ -558,9 +563,11 @@ int FSCDecompress(FSCDecoder* dec, uint8_t** out, size_t* out_size) {
     size -= next_size;
   }
   if (dec->status_ == FSC_ERROR) {
-    free(*out);
-    *out = 0;
-    *out_size = 0;
+    if (need_allocate) {
+      free(*out);
+      *out = 0;
+      *out_size = 0;
+    }
     return 0;
   }
   return 1;

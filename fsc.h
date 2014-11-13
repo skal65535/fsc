@@ -49,7 +49,6 @@ typedef enum {
 
   CODING_METHOD_16B_4X,   // default
 
-
   CODING_METHOD_UNIQUE,   // internal, do not use directly
 
   CODING_METHOD_LAST,
