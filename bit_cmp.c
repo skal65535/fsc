@@ -32,7 +32,7 @@ typedef uint64_t ANSStateW;  // internal state
 static size_t bANSEncode(const uint8_t* in, size_t in_size,
                          uint8_t* const buf_start, uint8_t* const buf_end,
                          ANSProba p0) {
-  ANSStateW x = BITS_LIMIT;
+  ANSStateW x;
   const ANSProba q0 = PROBA_MAX - p0;
   const ANSStateW threshold0 = BITS_LIMIT * p0;
   const ANSStateW threshold1 = BITS_LIMIT * q0;
@@ -42,9 +42,22 @@ static size_t bANSEncode(const uint8_t* in, size_t in_size,
   const uint64_t inv_q0 = q0 ? ((1ull << FIX) + q0 - 1) / q0 : 0;
 #endif
   ANSBaseW* buf = (ANSBaseW*)buf_end;
-  int i;
   assert(sizeof(ANSBaseW) * 8 == BITS);
-  for (i = in_size - 1; i >= 0; --i) {   // encode in reverse
+
+  int i = in_size - 1;
+  if (in_size <= BITS/8) {   // special corner case for too-small input
+    if (buf_end - in_size < buf_start) return 0;  // error
+    memcpy(buf_end - in_size, in, in_size);
+    return in_size;
+  }
+  // We encode the first few bytes into initial state.
+  x = 1ull;
+  while (x < BITS_LIMIT) {
+    x = (x << 8) | in[i];
+    --i;
+  }
+  // encode the rest... (in reverse)
+  for (; i >= 0; --i) {
     if (x >= (in[i] ? threshold1 : threshold0)) {
       if (buf <= (ANSBaseW*)buf_start) return 0;  // error
       *--buf = x & BITS_MASK;
@@ -87,6 +100,11 @@ static int bANSDecode(const ANSBaseW* ptr,
   ptr += 2;
   const ANSProba q0 = PROBA_MAX - p0;
   int i;
+  if (in_size <= 4) {
+    memcpy(out, ptr, in_size);
+    return 1;
+  }
+  in_size -= BITS / 8;  // few last bytes are encoded in the final state
   for (i = 0; i < in_size; ++i) {
     if (x < PROBA_MAX) {
       x = (x << BITS) | *ptr++;   // decode forward
@@ -99,7 +117,10 @@ static int bANSDecode(const ANSBaseW* ptr,
       x = q0 * (x >> PROBA_BITS) + xfrac - p0;
    }
   }
-  assert(x == BITS_LIMIT);
+  while (x != 1ull) {
+    out[i++] = x & 0xff;
+    x >>= 8;
+  }
   return 1;
 }
 
@@ -123,7 +144,7 @@ static size_t bArithEncode(const uint8_t* in, size_t in_size,
     } else {
       low = split + 1;
     }
-    if (((low ^ hi) >> BITS) == 0) {
+    if ((low ^ hi) < BITS_LIMIT) {
       if (buf >= (ANSBaseW*)buf_end) return 0;  // error
       *buf++ = hi >> BITS;
       low <<= BITS;
@@ -161,7 +182,7 @@ static int bArithDecode(const ANSBaseW* ptr,
     } else {
       low = split + 1;
     }    
-    if (((low ^ hi) >> BITS) == 0) {
+    if ((low ^ hi) < BITS_LIMIT) {
       x = (x << BITS) | *ptr++;
       low <<= BITS;
       hi <<= BITS;

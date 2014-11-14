@@ -229,13 +229,18 @@ static int GetBlockW1(FSCDecoder* dec, uint8_t* out, int size,
   FSCStateW state = *buf++;
 
   int n;
-  for (n = 0; n < size; ++n) {
+  for (n = 0; n < size - FSC_BITS / 8; ++n) {
     RENORMALIZE_STATE(state);
     if (lbr.eof_) break;
     out[n] = NextSymbol(dec, &state);
   }
   RENORMALIZE_STATE(state);
   FSCSetReadBufferPos(&lbr, (const uint8_t*)buf);
+  // The trailing bytes are encoded in the final state's lower bytes.
+  while (state != 1 && n < size) {
+    out[n++] = state & 0xff;
+    state >>= 8;
+  }
  End:
   *br = lbr;
   return !br->eof_;
@@ -249,24 +254,36 @@ static int GetBlockW2(FSCDecoder* dec, uint8_t* out, int size,
   const Symbol* const syms = dec->symbols_;
   lbr.eof_ = (buf == buf_end);
   if (lbr.eof_) goto End;
-  FSCStateW state0 = *buf++;
-  FSCStateW state1 = (size > 1) ? (*buf++) : 0;
+  FSCStateW state1 = *buf++;
+  FSCStateW state0 = (size > 1) ? (*buf++) : 0;
 
   int n;
-  for (n = 0; n + 1 < size; n += 2) {
-    RENORMALIZE_STATE(state0);
+  const int size_limit = (size - 2 * (FSC_BITS / 8)) & ~1;
+  for (n = 0; n < size_limit; n += 2) {
     RENORMALIZE_STATE(state1);
-    if (lbr.eof_) break;
-    out[n + 0] = NextSymbol(dec, &state0);
-    out[n + 1] = NextSymbol(dec, &state1);
-  }
-  RENORMALIZE_STATE(state0);
-  RENORMALIZE_STATE(state1);
-  if (size & 1) {
-    if (!lbr.eof_) out[n] = NextSymbol(dec, &state0);
     RENORMALIZE_STATE(state0);
+    if (lbr.eof_) break;
+    out[n + 0] = NextSymbol(dec, &state1);
+    out[n + 1] = NextSymbol(dec, &state0);
   }
+  RENORMALIZE_STATE(state1);
+  RENORMALIZE_STATE(state0);
+  if (size & 1) {
+    RENORMALIZE_STATE(state1);
+    if (!lbr.eof_) out[n++] = NextSymbol(dec, &state1);
+  }
+
   FSCSetReadBufferPos(&lbr, (const uint8_t*)buf);
+  // The trailing bytes are encoded in the final state's lower bytes.
+  while (state1 != 1 && n < size) {
+    out[n++] = state1 & 0xff;
+    state1 >>= 8;
+  }
+  while (state0 != 1 && n < size) {
+    out[n++] = state0 & 0xff;
+    state0 >>= 8;
+  }
+
  End:
   *br = lbr;
   return !br->eof_;
@@ -282,7 +299,9 @@ static int GetBlockW4(FSCDecoder* dec, uint8_t* out, int size,
   lbr.eof_ = (buf == buf_end);
   if (lbr.eof_) goto End;
   int r;
-  for (r = 0; r < 4; ++r) states[r] = *buf++;
+  for (r = 0; r < 4; ++r) {
+    states[r] = (size > 0) ? *buf++ : 0;
+  }
 
   int n;
   for (n = 0; n < (size & ~3); n += 4) {
@@ -342,22 +361,22 @@ static int GetBlockAliasW2(FSCDecoder* dec, uint8_t* out, int size,
   const Symbol* const syms = dec->symbols_;
   lbr.eof_ = (buf == buf_end);
   if (lbr.eof_) goto End;
-  FSCStateW state0 = *buf++;
-  FSCStateW state1 = (size > 1) ? (*buf++) : 0;
+  FSCStateW state1 = (*buf++);
+  FSCStateW state0 = (size > 1) ? (*buf++) : 0;
 
   int n;
   for (n = 0; n + 1 < size; n += 2) {
-    RENORMALIZE_STATE(state0);
     RENORMALIZE_STATE(state1);
+    RENORMALIZE_STATE(state0);
     if (lbr.eof_) break;
-    out[n + 0] = NextSymbolAlias(dec, &state0);
-    out[n + 1] = NextSymbolAlias(dec, &state1);
+    out[n + 0] = NextSymbolAlias(dec, &state1);
+    out[n + 1] = NextSymbolAlias(dec, &state0);
   }
   RENORMALIZE_STATE(state0);
-  RENORMALIZE_STATE(state1);
   if (size & 1) {
+    RENORMALIZE_STATE(state1);
+    if (!lbr.eof_) out[n++] = NextSymbolAlias(dec, &state1);
     RENORMALIZE_STATE(state0);
-    if (!lbr.eof_) out[n] = NextSymbolAlias(dec, &state0);
   }
   FSCSetReadBufferPos(&lbr, (const uint8_t*)buf);
  End:

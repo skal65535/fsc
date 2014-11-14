@@ -321,10 +321,14 @@ static void PutBlock(const FSCEncoder* enc, const uint8_t* in, int size,
 
 static int DoPutBlockW1(const FSCEncoder* enc, const uint8_t* in, int size,
                         FSCType output[BLOCK_SIZE]) {
-  int pos = BLOCK_SIZE;
-  FSCStateW state = FSC_MAX;
   const FSCStateW norm = (FSC_MAX >> MAX_LOG_TAB_SIZE) << FSC_BITS;
+  int pos = BLOCK_SIZE;
+  FSCStateW state = 1;
   int k = size;
+  // We encode the first few bytes into initial state.
+  while (state < FSC_MAX && k > 0) {
+    state = (state << 8) | in[--k];
+  }
   assert(enc->log_tab_size_ == MAX_LOG_TAB_SIZE);
   while (k > 0) {
     const Symbol* const s = &enc->symbols_[in[--k]];
@@ -339,11 +343,18 @@ static int DoPutBlockW1(const FSCEncoder* enc, const uint8_t* in, int size,
 static int DoPutBlockW2(const FSCEncoder* enc, const uint8_t* in, int size,
                         FSCType output[BLOCK_SIZE]) {
   int pos = BLOCK_SIZE;
-  FSCStateW state0 = FSC_MAX, state1 = FSC_MAX;
+  FSCStateW state0 = 1, state1 = 1;
   const FSCStateW norm = (FSC_MAX >> MAX_LOG_TAB_SIZE) << FSC_BITS;
   int k = size;
   assert(enc->log_tab_size_ == MAX_LOG_TAB_SIZE);
-  if (size & 1) {
+  // We encode the first few bytes into initial states.
+  while (state0 < FSC_MAX && k > 0) {
+    state0 = (state0 << 8) | in[--k];
+  }
+  while (state1 < FSC_MAX && k > 0) {
+    state1 = (state1 << 8) | in[--k];
+  }
+  if (k & 1) {
     const Symbol* const s1 = &enc->symbols_[in[--k]];
     FLUSH_STATE(state1, norm * s1->freq_);
     RENORMALIZE_STATE(state1, s1);
@@ -358,8 +369,10 @@ static int DoPutBlockW2(const FSCEncoder* enc, const uint8_t* in, int size,
   }
   FLUSH_STATE(state0, 0);
   FLUSH_STATE(state1, 0);
-  FLUSH_STATE(state0, 0);
-  FLUSH_STATE(state1, 0);
+  if (size > 1) {
+    FLUSH_STATE(state0, 0);
+    FLUSH_STATE(state1, 0);
+  }
   return pos;
 }
 
@@ -390,8 +403,11 @@ static int DoPutBlockW4(const FSCEncoder* enc, const uint8_t* in, int size,
     RENORMALIZE_STATE(states[2], s2);
     RENORMALIZE_STATE(states[3], s3);
   }
-  for (r = 0; r < 8; ++r) {
-    FLUSH_STATE(states[r & 3], 0);
+  for (r = 0; r < 4; ++r) {
+    FLUSH_STATE(states[r], 0);
+  }
+  for (r = 0; r < 4; ++r) {
+    if (size > 0) FLUSH_STATE(states[r], 0);
   }
   return pos;
 }
@@ -456,7 +472,7 @@ static int DoPutBlockAliasW2(const FSCEncoder* enc, const uint8_t* in, int size,
   const FSCStateW norm = (FSC_MAX >> MAX_LOG_TAB_SIZE) << FSC_BITS;
   int k = size;
   assert(enc->log_tab_size_ == MAX_LOG_TAB_SIZE);
-  if (size & 1) {
+  if (k & 1) {
     const Symbol* const s1 = &enc->symbols_[in[--k]];
     FLUSH_STATE(state1, norm * s1->freq_);
     RENORMALIZE_STATE_ALIAS(state1, s1);
