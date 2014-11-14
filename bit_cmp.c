@@ -123,7 +123,7 @@ static size_t bArithEncode(const uint8_t* in, size_t in_size,
     } else {
       low = split + 1;
     }
-    if (((low ^ hi) >> BITS) == 0) {
+    if ((low ^ hi) < BITS_LIMIT) {
       if (buf >= (ANSBaseW*)buf_end) return 0;  // error
       *buf++ = hi >> BITS;
       low <<= BITS;
@@ -161,7 +161,7 @@ static int bArithDecode(const ANSBaseW* ptr,
     } else {
       low = split + 1;
     }    
-    if (((low ^ hi) >> BITS) == 0) {
+    if ((low ^ hi) < BITS_LIMIT) {
       x = (x << BITS) | *ptr++;
       low <<= BITS;
       hi <<= BITS;
