@@ -112,7 +112,7 @@ static int bANSDecode(const ANSBaseW* ptr,
     const ANSProba xfrac = x & PROBA_MASK;
     out[i] = (xfrac >= p0);
     if (xfrac < p0) {
-       x = p0 * (x >> PROBA_BITS) + xfrac;
+      x = p0 * (x >> PROBA_BITS) + xfrac;
     } else {
       x = q0 * (x >> PROBA_BITS) + xfrac - p0;
    }
