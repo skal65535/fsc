@@ -20,7 +20,7 @@
 
 #define PROBA_BITS 31
 #define BITS 32
-typedef uint64_t ANSProba;
+typedef uint32_t ANSProba;
 typedef uint32_t ANSBaseW;   // I/O words
 typedef uint64_t ANSStateW;  // internal state
 
@@ -29,6 +29,9 @@ typedef uint64_t ANSStateW;  // internal state
 #define BITS_LIMIT ((ANSStateW)1 << BITS)
 #define BITS_MASK (BITS_LIMIT - 1)
 
+#define RECIPROCAL_BITS (0)
+#include "./divide.h"
+
 static size_t bANSEncode(const uint8_t* in, size_t in_size,
                          uint8_t* const buf_start, uint8_t* const buf_end,
                          ANSProba p0) {
@@ -36,10 +39,10 @@ static size_t bANSEncode(const uint8_t* in, size_t in_size,
   const ANSProba q0 = PROBA_MAX - p0;
   const ANSStateW threshold0 = BITS_LIMIT * p0;
   const ANSStateW threshold1 = BITS_LIMIT * q0;
-#if (PROBA_BITS <= 16)
-#define FIX 63
-  const uint64_t inv_p0 = p0 ? ((1ull << FIX) + p0 - 1) / p0 : 0;
-  const uint64_t inv_q0 = q0 ? ((1ull << FIX) + q0 - 1) / q0 : 0;
+#if (RECIPROCAL_BITS >= 0)
+  inv_t inv_p0, inv_q0;
+  FSCInitDivide(p0, &inv_p0);
+  FSCInitDivide(q0, &inv_q0);
 #endif
   ANSBaseW* buf = (ANSBaseW*)buf_end;
   assert(sizeof(ANSBaseW) * 8 == BITS);
@@ -63,24 +66,24 @@ static size_t bANSEncode(const uint8_t* in, size_t in_size,
       *--buf = x & BITS_MASK;
       x >>= BITS;
     }
-#if defined(FIX)
+#if (RECIPROCAL_BITS >= 0)
 // x is decomposed as: x = k.p0 + r
 // x' = k.L + r , where k = x/p0 = (x * inv_p0) >> FIX
 // x' = k.L + x - k.p0 = k.(L-p0) + x = k.q0 + x
+// and similarly: x' = x + (x / q0) * p0 + p0 for the other symbol
     if (in[i]) {
-      const ANSStateW q = ((__int128)x * inv_q0) >> FIX;
+      const ANSStateW q = FSCDivide(x, inv_q0);
       x += q * p0 + p0;
     } else {
-      const ANSStateW q = ((__int128)x * inv_p0) >> FIX;
+      const ANSStateW q = FSCDivide(x, inv_p0);
       x += q * q0 + 0;
     }
 #else
     if (in[i]) {
+      // here, gcc-x86 is faster because x/q0 and x%q0 are a single instruction
       x = ((x / q0) << PROBA_BITS) + (x % q0) + p0;
-// slower:      x += (x / q0) * p0 + p0;
     } else {
       x = ((x / p0) << PROBA_BITS) + (x % p0);
-// slower:      x += (x / p0) * q0;
     }
 #endif
   }
@@ -90,6 +93,7 @@ static size_t bANSEncode(const uint8_t* in, size_t in_size,
   }
   *--buf = (x >>    0) & BITS_MASK;
   *--buf = (x >> BITS) & BITS_MASK;
+
   return buf_end - (uint8_t*)buf;
 }
 
@@ -270,7 +274,7 @@ int main(int argc, const char* argv[]) {
 
   int p;
   for (p = pmin; (p <= pmax) && (nb_errors == 0); ++p) {
-    const ANSProba p0 =  (ANSProba)(p / 256. * PROBA_MAX);
+    const ANSProba p0 =  (ANSProba)((double)p * PROBA_MAX / 256.);
     MyClock start, tmp;
     double S_ANS = 0., S_AC = 0.;
     double t_ANS_enc = 0., t_ANS_dec = 0.;

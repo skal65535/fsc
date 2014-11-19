@@ -17,7 +17,7 @@ LDFLAGS = -lm
 %.a:
 	$(AR) $(ARFLAGS) $@ $^
 
-libfscutils.a: fsc_utils.o fsc_utils.h
+libfscutils.a: fsc_utils.o fsc_utils.h divide.h
 
 libfsc.a: fsc_enc.o fsc_dec.o fsc.h bits.o bits.h alias.o alias.h histo.o
 
