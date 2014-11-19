@@ -37,7 +37,7 @@ typedef struct {
 static inline void FSCInitDivide(ANSProba p, inv_t* div) {
   if (p > 0) {
     int s = 0;
-    while (p > (1ull << s)) ++s;  
+    while (p > (1ull << s)) ++s;
     const uint64_t base = 1ull << (s - 1 + DIV_FIX - 32);
     const uint64_t v1 = base / p;
     const uint64_t v0 = (((base % p) << 32) + p - 1) / p;
