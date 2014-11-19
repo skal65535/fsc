@@ -18,11 +18,11 @@
 
 #include "./fsc_utils.h"
 
-#define PROBA_BITS 31
-#define BITS 32
-typedef uint32_t ANSProba;
-typedef uint32_t ANSBaseW;   // I/O words
-typedef uint64_t ANSStateW;  // internal state
+#define PROBA_BITS 15
+#define BITS 16
+typedef uint16_t ANSProba;
+typedef uint16_t ANSBaseW;   // I/O words
+typedef uint32_t ANSStateW;  // internal state
 
 #define PROBA_MAX ((ANSProba)1 << PROBA_BITS)
 #define PROBA_MASK (PROBA_MAX - 1)
@@ -99,7 +99,6 @@ static size_t bANSEncode(const uint8_t* in, size_t in_size,
 
 static int bANSDecode(const ANSBaseW* ptr,
                       uint8_t* out, size_t in_size, ANSProba p0) {
-
   ANSStateW x = ((ANSStateW)ptr[0] << BITS) | (ANSStateW)ptr[1];
   ptr += 2;
   const ANSProba q0 = PROBA_MAX - p0;
@@ -139,9 +138,11 @@ static size_t bArithEncode(const uint8_t* in, size_t in_size,
   int i;
   for (i = 0; i < in_size; ++i) {
     const ANSStateW diff = hi - low;
-    ANSStateW split = low + (diff >> PROBA_BITS) * p0;
 #if (2 * PROBA_BITS + BITS > 64)
+    ANSStateW split = low + (diff >> PROBA_BITS) * p0;
     split += ((diff & PROBA_MASK) * p0) >> PROBA_BITS;
+#else
+    const ANSStateW split = low + ((uint64_t)diff * p0 >> PROBA_BITS);
 #endif
     if (!in[i]) {
       hi = split;
@@ -176,9 +177,11 @@ static int bArithDecode(const ANSBaseW* ptr,
   int i;
   for (i = 0; i < in_size; ++i) {
     const ANSStateW diff = hi - low;
-    ANSStateW split = low + (diff >> PROBA_BITS) * p0;
 #if (2 * PROBA_BITS + BITS > 64)
+    ANSStateW split = low + (diff >> PROBA_BITS) * p0;
     split += ((diff & PROBA_MASK) * p0) >> PROBA_BITS;
+#else
+    const ANSStateW split = low + ((uint64_t)diff * p0 >> PROBA_BITS);
 #endif
     out[i] = (x > split);
     if (!out[i]) {
