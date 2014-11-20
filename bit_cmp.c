@@ -18,18 +18,18 @@
 
 #include "./fsc_utils.h"
 
-#define PROBA_BITS 15
+#define PROBA_BITS 16
 #define BITS 16
 typedef uint16_t ANSProba;
 typedef uint16_t ANSBaseW;   // I/O words
 typedef uint32_t ANSStateW;  // internal state
 
-#define PROBA_MAX ((ANSProba)1 << PROBA_BITS)
+#define PROBA_MAX (1ull << PROBA_BITS)
 #define PROBA_MASK (PROBA_MAX - 1)
 #define BITS_LIMIT ((ANSStateW)1 << BITS)
 #define BITS_MASK (BITS_LIMIT - 1)
 
-#define RECIPROCAL_BITS (0)
+#define RECIPROCAL_BITS (16)
 #include "./divide.h"
 
 static size_t bANSEncode(const uint8_t* in, size_t in_size,
