@@ -29,8 +29,30 @@ typedef uint32_t ANSStateW;  // internal state
 #define BITS_LIMIT ((ANSStateW)1 << BITS)
 #define BITS_MASK (BITS_LIMIT - 1)
 
-#define RECIPROCAL_BITS (0)
+#define RECIPROCAL_BITS (16)
 #include "./divide.h"
+
+// #define USE_TABLE
+
+#ifdef USE_TABLE
+static ANSProba kSpreadTab[PROBA_MASK + 1];
+void InitSpreadTable(ANSProba p0, ANSProba tab[], int inverse) {
+  int r;
+  FSCRandom rg;
+  FSCInitRandom(&rg);
+  if (inverse) {
+    ANSProba tmp[PROBA_MASK + 1];
+    InitSpreadTable(p0, tmp, 0);
+    for (r = 0; r <= PROBA_MASK; ++r) tab[tmp[r]] = r;
+    return;
+  }
+  for (r = 0; r <= PROBA_MASK; ++r) {
+    //tab[r] = (r < p0) ? (PROBA_MASK + 1 - p0 + r) : r - p0;
+    const int K = (PROBA_MAX>>2) + (PROBA_MAX>>3) + 1;
+    tab[(r * K) & PROBA_MASK] = r;
+  }
+}
+#endif
 
 static size_t bANSEncode(const uint8_t* in, size_t in_size,
                          uint8_t* const buf_start, uint8_t* const buf_end,
@@ -43,6 +65,9 @@ static size_t bANSEncode(const uint8_t* in, size_t in_size,
   inv_t inv_p0, inv_q0;
   FSCInitDivide(p0, &inv_p0);
   FSCInitDivide(q0, &inv_q0);
+#endif
+#ifdef USE_TABLE
+  InitSpreadTable(p0, kSpreadTab, 0);
 #endif
   ANSBaseW* buf = (ANSBaseW*)buf_end;
   assert(sizeof(ANSBaseW) * 8 == BITS);
@@ -79,12 +104,20 @@ static size_t bANSEncode(const uint8_t* in, size_t in_size,
       x += q * q0 + 0;
     }
 #else
+#ifndef USE_TABLE
     if (in[i]) {
       // here, gcc-x86 is faster because x/q0 and x%q0 are a single instruction
       x = ((x / q0) << PROBA_BITS) + (x % q0) + p0;
     } else {
       x = ((x / p0) << PROBA_BITS) + (x % p0);
     }
+#else
+    if (in[i]) {
+      x = ((x / q0) << PROBA_BITS) + kSpreadTab[(x % q0) + p0];
+    } else {
+      x = ((x / p0) << PROBA_BITS) + kSpreadTab[(x % p0) + 0];
+    }
+#endif
 #endif
   }
   if (buf - 2 < (ANSBaseW*)buf_start) {
@@ -103,6 +136,9 @@ static int bANSDecode(const ANSBaseW* ptr,
   ptr += 2;
   const ANSProba q0 = PROBA_MAX - p0;
   int i;
+#ifdef USE_TABLE
+  InitSpreadTable(p0, kSpreadTab, 1);
+#endif
   if (in_size <= 4) {
     memcpy(out, ptr, in_size);
     return 1;
@@ -112,13 +148,17 @@ static int bANSDecode(const ANSBaseW* ptr,
     if (x < PROBA_MAX) {
       x = (x << BITS) | *ptr++;   // decode forward
     }
+#ifndef USE_TABLE
     const ANSProba xfrac = x & PROBA_MASK;
+#else
+    const ANSProba xfrac = kSpreadTab[x & PROBA_MASK];
+#endif
     out[i] = (xfrac >= p0);
     if (xfrac < p0) {
       x = p0 * (x >> PROBA_BITS) + xfrac;
     } else {
       x = q0 * (x >> PROBA_BITS) + xfrac - p0;
-   }
+    }
   }
   while (x != 1ull) {
     out[i++] = x & 0xff;
@@ -163,7 +203,7 @@ static size_t bArithEncode(const uint8_t* in, size_t in_size,
   *buf++ = hi >> BITS;
 
   const size_t size = (uint8_t*)buf - buf_start;
-  return size; 
+  return size;
 }
 
 static int bArithDecode(const ANSBaseW* ptr,
@@ -173,7 +213,7 @@ static int bArithDecode(const ANSBaseW* ptr,
   ANSStateW hi = ~0;
   ANSStateW x = *ptr++;
   x = (x << BITS) | *ptr++;
-  
+
   int i;
   for (i = 0; i < in_size; ++i) {
     const ANSStateW diff = hi - low;
@@ -188,7 +228,7 @@ static int bArithDecode(const ANSBaseW* ptr,
       hi = split;
     } else {
       low = split + 1;
-    }    
+    }
     if ((low ^ hi) < BITS_LIMIT) {
       x = (x << BITS) | *ptr++;
       low <<= BITS;
