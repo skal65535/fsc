@@ -162,8 +162,6 @@ static int BuildStateTable(FSCDecoder* dec, const uint32_t counts[]) {
   const int max_symbol = dec->max_symbol_;
 
   assert(max_symbol <= MAX_SYMBOLS && max_symbol > 0);
-  for (s = 0; s < max_symbol; ++s) state[s] = counts[s];
-
   uint8_t* const symbols = (uint8_t*)malloc(tab_size * sizeof(*symbols));
   if (symbols == NULL) return 0;
   if (!dec->methods_.spread(max_symbol, counts, log_tab_size, symbols)) {
@@ -171,14 +169,23 @@ static int BuildStateTable(FSCDecoder* dec, const uint32_t counts[]) {
     return 0;
   }
 
+  uint8_t nb_bits[MAX_SYMBOLS];
+  uint16_t wrap[MAX_SYMBOLS];
+  for (s = 0; s < max_symbol; ++s) {
+    state[s] = counts[s];
+    const int len = (state[s] > 0) ? Log2(state[s]) : 0;
+    nb_bits[s] = log_tab_size - len;
+    wrap[s] = (2 << len);
+  }
+
   for (pos = 0; pos < tab_size; ++pos) {
     s = symbols[pos];
     tab[pos].symbol_ = s;
     const int next_state = state[s]++;
-    const int nb_bits = log_tab_size - Log2(next_state);
-    const int new_pos = (next_state << nb_bits) - tab_size;
+    const int len = nb_bits[s] - (next_state >= wrap[s]);
+    const int new_pos = (next_state << len) - tab_size;
     tab[pos].next_ = new_pos - pos;   // how to jump from Is to I
-    tab[pos].len_  = nb_bits;
+    tab[pos].len_  = len;
   }
   free(symbols);
   if (pos != tab_size) return 0;   // input not normalized!
