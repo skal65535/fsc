@@ -33,7 +33,56 @@ void FSCCountSymbols(const uint8_t* in, size_t in_size,
 }
 
 //------------------------------------------------------------------------------
+// Selection helper function
 
+static void SwapU32(uint32_t* const A, uint32_t* const B) {
+  const uint32_t tmp = *A;
+  *A = *B;
+  *B = tmp;
+}
+static void CheckSwapU32(uint32_t* const A, uint32_t* const B) {
+  assert(A <= B);
+  if (A != B && *A < *B) SwapU32(A, B);
+}
+
+// select the Mth largest keys amongst N
+void Select(uint32_t* const keys, int M, int N) {
+  if (M == N || N <= 1) return;  // done
+  int low = 0, hi = N - 1;
+  while (1) {
+    if (low + 1 >= hi) {   // only 1 or 2 left
+      if (low + 1 == hi) CheckSwapU32(keys + low, keys + low + 1);
+      return;  // done!
+    }
+    const int mid = (low + hi) >> 1;
+    // sort low | mid | hi triplet of entries
+    CheckSwapU32(keys + low, keys + hi);
+    CheckSwapU32(keys + mid, keys + hi);
+    CheckSwapU32(keys + low, keys + mid);
+    // move mid in position low + 1 (will serve as pivot)
+    SwapU32(keys + low + 1, keys + mid);
+    const uint32_t pivot = keys[low + 1];
+    // and start loop over [low + 2, hi - 1] sub-range
+    int i = low + 2;
+    int j = hi - 1;
+    while (1) {
+      while (keys[i] > pivot) ++i;
+      while (keys[j] < pivot) --j;
+      if (j < i) break;  // they crossed the streams!
+      SwapU32(keys + i, keys + j);
+    }
+    keys[low + 1] = keys[j];    // move pivot back to position
+    keys[j] = pivot;
+    // recurse down (only one branch)
+    if (j >= M) {
+      hi = j - 1;
+    } else {
+      low = j + 1;
+    }
+  }
+}
+
+//------------------------------------------------------------------------------
 // Analyze counts[] and renormalize with Squeaky Wheel fix, so that
 // the total is rescaled to be equal to tab_size exactly.
 int FSCNormalizeCounts(uint32_t counts[MAX_SYMBOLS], int max_symbol,
@@ -56,33 +105,54 @@ int FSCNormalizeCounts(uint32_t counts[MAX_SYMBOLS], int max_symbol,
   if (nb_symbols > tab_size) return 0;
   max_symbol = last_nz;
 
-  float target[MAX_SYMBOLS];
+  uint32_t keys[MAX_SYMBOLS];
   int miss = tab_size;
   const float norm = 1.f * tab_size / total;
+  int non_zero = 0;
+  const float key_norm = (float)((1u << 24) / MAX_SYMBOLS);
   for (n = 0; n < max_symbol; ++n) {
-    target[n] = norm * counts[n];
     if (counts[n] > 0) {
-      counts[n] = (uint32_t)(target[n] + .5);
+      const float target = norm * counts[n];
+      counts[n] = (uint32_t)(target + .5);  // round
       if (counts[n] == 0) counts[n] = 1;
       miss -= counts[n];
+      const uint32_t error = (uint32_t)(key_norm * (target - counts[n]));
+      keys[non_zero++] = (error * MAX_SYMBOLS) + n;
     }
   }
-  const int incr = (miss > 0) ? 1 : -1;
-  if (miss < 0) miss = -miss;
-  while (miss-- > 0) {
-    int worst = -1;
-    float worst_diff = 0;
+  if (miss == 0) return max_symbol;
+
+  if (miss > 0) {
+    Select(keys, miss, non_zero);
+    for (n = 0; n < miss; ++n) {
+      ++counts[keys[n] % MAX_SYMBOLS];
+    }
+  } else {
+    // Overflow case. We need to decrease some counts, but need extra care
+    // to not make any counts[] go to zero. So we just loop and shave off
+    // the largest elements greater than 2 until we're good. It's garanteed
+    // to terminate.
+    non_zero = 0;
+    const uint32_t cap_count = (1u << 23) - 1;  // to avoid overflow
     for (n = 0; n < max_symbol; ++n) {
-      if (counts[n] > (incr < 0 ? 1 : 0)) {
-        const float diff = fabs(target[n] - counts[n]);
-        if (worst_diff <= diff) {
-          worst_diff = diff;
-          worst = n;
+      if (counts[n] > 1) {
+        const uint32_t c = (counts[n] > cap_count) ? cap_count : counts[n];
+        keys[non_zero++] = (c * MAX_SYMBOLS) + n;
+      }
+    }
+    assert(non_zero > 0);
+    miss = -miss;
+    Select(keys, miss, non_zero);
+    int to_fix = miss;
+    while (to_fix > 0) {
+      for (n = 0; n < miss && to_fix > 0; ++n) {
+        const uint32_t idx = keys[n] % MAX_SYMBOLS;
+        if (counts[idx] > 1) {
+          --counts[idx];
+          --to_fix;
         }
       }
     }
-    assert(worst >= 0);
-    counts[worst] += incr;
   }
   return max_symbol;
 }
