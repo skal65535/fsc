@@ -34,6 +34,13 @@ void FSCCountSymbols(const uint8_t* in, size_t in_size,
 
 //------------------------------------------------------------------------------
 
+static int CompareKey(const void* p1, const void* p2) {
+  const uint32_t a = *(const uint32_t*)p1;
+  const uint32_t b = *(const uint32_t*)p2;
+  assert(a != b);
+  return (a > b) ? -1 : 1;
+}
+
 // Analyze counts[] and renormalize with Squeaky Wheel fix, so that
 // the total is rescaled to be equal to tab_size exactly.
 int FSCNormalizeCounts(uint32_t counts[MAX_SYMBOLS], int max_symbol,
@@ -56,33 +63,44 @@ int FSCNormalizeCounts(uint32_t counts[MAX_SYMBOLS], int max_symbol,
   if (nb_symbols > tab_size) return 0;
   max_symbol = last_nz;
 
-  float target[MAX_SYMBOLS];
+  uint32_t keys[MAX_SYMBOLS];
   int miss = tab_size;
   const float norm = 1.f * tab_size / total;
+  int non_zero = 0;
   for (n = 0; n < max_symbol; ++n) {
-    target[n] = norm * counts[n];
     if (counts[n] > 0) {
-      counts[n] = (uint32_t)(target[n] + .5);
+      const float target = norm * counts[n];
+      counts[n] = (uint32_t)target;  // floor
       if (counts[n] == 0) counts[n] = 1;
       miss -= counts[n];
+      const uint32_t error = (uint32_t)((target - counts[n]) * (1 << 24));
+      keys[non_zero++] = (error << 8) | n;
     }
   }
-  const int incr = (miss > 0) ? 1 : -1;
-  if (miss < 0) miss = -miss;
-  while (miss-- > 0) {
-    int worst = -1;
-    float worst_diff = 0;
-    for (n = 0; n < max_symbol; ++n) {
-      if (counts[n] > (incr < 0 ? 1 : 0)) {
-        const float diff = fabs(target[n] - counts[n]);
-        if (worst_diff <= diff) {
-          worst_diff = diff;
-          worst = n;
+  if (miss == 0) return max_symbol;
+
+  if (miss > 0) {
+    // TODO(skal): we only need to select #miss top entries, not sort
+    qsort(keys, non_zero, sizeof(keys[0]), CompareKey);
+    for (n = 0; n < miss; ++n) {
+      const uint32_t key = keys[n];
+      const int idx = keys[n] & 0xff;
+      ++counts[idx];
+    }
+  } else {
+    // Rare case where ended up overflowing because counts[] are capped to 1 below.
+    qsort(keys, non_zero, sizeof(keys[0]), CompareKey);
+    while (miss != 0) {
+      for (n = 0; miss != 0 && n < non_zero; ++n) {
+        const uint32_t key = keys[non_zero - 1 - n];
+        const int idx = keys[n] & 0xff;
+        if (counts[idx] > 1) {
+          --counts[idx];
+          ++miss;
+          if (miss == 0) break;
         }
       }
     }
-    assert(worst >= 0);
-    counts[worst] += incr;
   }
   return max_symbol;
 }
