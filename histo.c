@@ -75,12 +75,13 @@ int FSCNormalizeCounts(uint32_t counts[MAX_SYMBOLS], int max_symbol,
     for (n = 0; n < max_symbol; ++n) {
       if (counts[n] > (incr < 0 ? 1 : 0)) {
         const float diff = fabs(target[n] - counts[n]);
-        if (worst_diff < diff) {
+        if (worst_diff <= diff) {
           worst_diff = diff;
           worst = n;
         }
       }
     }
+    assert(worst >= 0);
     counts[worst] += incr;
   }
   return max_symbol;
