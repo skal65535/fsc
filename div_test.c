@@ -22,7 +22,7 @@
   const ANSStateW q0 = (p > 0) ? (ANSStateW)(x) / (p) : (x);             \
   const ANSStateW q1 = FSCDivide((ANSStateW)(x), (div));                 \
   if (q0 != q1) {                                                        \
-    printf("Error! 0x%.16lx / 0x%.16lx = 0x%.16lx != 0x%.16lx  ",        \
+    printf("Error! 0x%.16llx / 0x%.16llx = 0x%.16llx != 0x%.16llx  ",    \
       (uint64_t)x, (uint64_t)p, (uint64_t)q0, (uint64_t)q1);             \
   }                                                                      \
 } while (0)
@@ -49,7 +49,7 @@ static void NAME() {                                           \
     }                                                          \
     if (!(p & 512)) printf("%.3lf     \r", 100. * p / max_p);  \
   }                                                            \
-  printf("\nDone testing " #NAME " (max_p=%lu)!\n", max_p);    \
+  printf("\nDone testing " #NAME " (max_p=%llu)!\n", max_p);   \
 }
 
 ///////// Test 16bit case //////////
