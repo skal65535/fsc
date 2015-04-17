@@ -22,7 +22,7 @@
 #include <stdio.h>
 #include <assert.h>
 
-int AliasInit(AliasTable* const t, const uint32_t counts[], int max_symbol) {
+int AliasInit(AliasTable t, const uint32_t counts[], int max_symbol) {
   // partition: small symbols at bottom, larges on top
   uint8_t symbols[ALIAS_MAX_SYMBOLS];
   int l = ALIAS_MAX_SYMBOLS, s = 0;
@@ -50,29 +50,30 @@ int AliasInit(AliasTable* const t, const uint32_t counts[], int max_symbol) {
     const int S = symbols[--s];
     const int L = symbols[l++];
     assert(proba[S] < cut);       // check that S is a small one
-    t->cut_[S] = proba[S] + S * cut;
-    t->other_[S] = L;
-    proba[L] += proba[S] - cut;   // decrease large proba
+    t[S].cut_ = proba[S] + S * cut;
+    t[S].other_ = L;
+    proba[L] -= cut - proba[S];   // decrease large proba
     if (proba[L] >= cut) {
-      symbols[--l] = L;   // large is still large
+      --l;                // large symbol stays large. Reuse the slot.
     } else {
       symbols[s++] = L;   // large becomes small
     }
   }
   while (l < ALIAS_MAX_SYMBOLS) {
     const int L = symbols[l++];
-    t->other_[L] = L;
-    t->cut_[L] = cut + L * cut;
+    t[L].other_ = L;
+    t[L].cut_ = cut + L * cut;  // large symbols with max proba
   }
 
+  // Accumulate counts and compute the start_.
   uint32_t c[MAX_SYMBOLS] = { 0 };
   for (s = 0; s < MAX_SYMBOLS; ++s) {
-    const int other = t->other_[s];
-    const int count_s = t->cut_[s] - s * cut;
-    const int count_other = cut - count_s;
-    t->start_[2 * s + 0] = s * cut - c[s];
-    t->start_[2 * s + 1] = s * cut + count_s - c[other];
-    c[s] += count_s;
+    const int other = t[s].other_;
+    const int count_s = t[s].cut_ - s * cut;
+    const int count_other = cut - count_s;    // complement to 'cut'
+    t[s].start_       = s * cut - c[s];
+    t[s].other_start_ = s * cut + count_s - c[other];
+    c[s]     += count_s;
     c[other] += count_other;
   }
   return AliasVerifyTable(t, counts, max_symbol);
@@ -80,7 +81,7 @@ int AliasInit(AliasTable* const t, const uint32_t counts[], int max_symbol) {
 
 //------------------------------------------------------------------------------
 
-void AliasGenerateMap(const AliasTable* const t, alias_t map[MAX_TAB_SIZE]) {
+void AliasGenerateMap(const AliasTable t, alias_t map[MAX_TAB_SIZE]) {
   int r;
   for (r = 0; r < MAX_TAB_SIZE; ++r) {
     uint32_t dummy;
@@ -93,10 +94,10 @@ int AliasSpreadMap(int max_symbol, const uint32_t counts[],
   AliasTable t;
   int i;
   assert(log_tab_size == MAX_LOG_TAB_SIZE);  // TODO(skal): support more sizes!
-  if (!AliasInit(&t, counts, max_symbol)) return 0;
+  if (!AliasInit(t, counts, max_symbol)) return 0;
   for (i = 0; i < (1 << log_tab_size); ++i) {
     uint32_t dummy;
-    symbols[i] = AliasSearchSymbol(&t, i, &dummy);
+    symbols[i] = AliasSearchSymbol(t, i, &dummy);
   }
   return 1;
 }
@@ -107,7 +108,7 @@ int AliasBuildEncMap(const uint32_t counts[], int max_symbol,
   uint32_t r;
   uint32_t starts[MAX_SYMBOLS];
   uint32_t start = 0;
-  if (!AliasInit(&t, counts, max_symbol)) return 0;
+  if (!AliasInit(t, counts, max_symbol)) return 0;
   
   for (r = 0; r < max_symbol; ++r) {
     starts[r] = start;
@@ -117,7 +118,7 @@ int AliasBuildEncMap(const uint32_t counts[], int max_symbol,
 
   for (r = 0; r < MAX_TAB_SIZE; ++r) {
     uint32_t rank;
-    const uint32_t s = AliasSearchSymbol(&t, r, &rank);
+    const uint32_t s = AliasSearchSymbol(t, r, &rank);
     map[rank + starts[s]] = r;
   }
   return 1;
@@ -125,7 +126,7 @@ int AliasBuildEncMap(const uint32_t counts[], int max_symbol,
 
 //------------------------------------------------------------------------------
 
-int AliasVerifyTable(const AliasTable* const t,
+int AliasVerifyTable(const AliasTable t,
                      const uint32_t counts[], int max_symbol) {
   int error = 0;
 #ifdef DEBUG_ALIAS
@@ -152,10 +153,10 @@ int AliasVerifyTable(const AliasTable* const t,
     const int count = c[s]++;
     if (rank != count) {
       const int r = i >> (MAX_LOG_TAB_SIZE - LOG2_MAX_SYMBOLS);
-      const int use_alias = (i >= t->cut_[r]);
+      const int use_alias = (i >= t[r].cut_);
       printf("%c s=%d%c %d / %d   r=%d  bucket=%d offset=%d | %d\n",
              " !"[rank != count], s, " *"[use_alias], rank, count, i, r,
-             t->start_[2 * r + 0], t->start_[2 * r + 1]);
+             t[r].start_, t[r].other_start_);
       error += (rank != count);
     }
   }

@@ -33,23 +33,26 @@ typedef uint8_t alias_t;        // enough to encode MAX_SYMBOLS
 typedef uint32_t alias_tab_t;   // enough to store MAX_TAB_SIZE index
 
 typedef struct {
-  alias_tab_t cut_[ALIAS_MAX_SYMBOLS];
-  alias_t other_[ALIAS_MAX_SYMBOLS];
-  int32_t start_[2 * ALIAS_MAX_SYMBOLS];
-} AliasTable;
+  alias_tab_t cut_;
+  alias_t other_;    // other symbol if residual >= cut_
+  int32_t start_;
+  int32_t other_start_;
+} AliasPair;
 
-static inline alias_t AliasSearchSymbol(const AliasTable* const t, uint32_t r,
+typedef AliasPair AliasTable[ALIAS_MAX_SYMBOLS];
+
+static inline alias_t AliasSearchSymbol(const AliasTable t, uint32_t r,
                                         uint32_t* const rank) {
   const int s = r >> (MAX_LOG_TAB_SIZE - LOG2_MAX_SYMBOLS);
-  const int use_alias = (r >= t->cut_[s]);
-  *rank = r - t->start_[2 * s + use_alias];
-  return use_alias ? t->other_[s] : (alias_t)s;
+  const int use_alias = (r >= t[s].cut_);
+  *rank = r - (use_alias ? t[s].other_start_ : t[s].start_);
+  return use_alias ? t[s].other_ : (alias_t)s;
 }
 
-int AliasInit(AliasTable* const t, const uint32_t counts[], int max_symbol);
-void AliasGenerateMap(const AliasTable* const t, alias_t map[MAX_TAB_SIZE]);
+int AliasInit(AliasTable t, const uint32_t counts[], int max_symbol);
+void AliasGenerateMap(const AliasTable t, alias_t map[MAX_TAB_SIZE]);
 
-int AliasVerifyTable(const AliasTable* const t,
+int AliasVerifyTable(const AliasTable t,
                      const uint32_t counts[], int max_symbol);   // debug
 
 // encoding:

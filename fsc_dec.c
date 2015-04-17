@@ -133,13 +133,13 @@ static uint8_t NextSymbol(const FSCDecoder* const dec, FSCStateW* const state) {
 
 static int BuildStateTableAliasW(FSCDecoder* dec, const uint32_t counts[]) {
   return SymbolsInit(dec, counts, dec->max_symbol_) &&
-         AliasInit(&dec->alias_, counts, dec->max_symbol_);
+         AliasInit(dec->alias_, counts, dec->max_symbol_);
 }
 
 static uint8_t NextSymbolAlias(const FSCDecoder* const dec, FSCStateW* const state) {
   uint32_t rank;
   const uint32_t r = (*state) & (MAX_TAB_SIZE - 1);
-  const uint8_t s = AliasSearchSymbol(&dec->alias_, r, &rank);
+  const uint8_t s = AliasSearchSymbol(dec->alias_, r, &rank);
   const int freq = dec->symbols_[s].freq_;
   *state = freq * ((*state) >> MAX_LOG_TAB_SIZE) + rank;
   return s;
